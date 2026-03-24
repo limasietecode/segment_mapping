@@ -43,7 +43,7 @@
       <div class="control-group">
         <label>Shrinkwrap Offset: <span id="shrinkOffsetVal">10</span>px</label>
         <input type="range" id="shrinkOffset" min="0" max="50" value="10">
-        <button id="btnShrinkwrap" class="btn-action">Compute Shrinkwrap</button>
+        <button id="btnShrinkwrap" class="btn-toggle" style="margin-top: 15px;">Compute Shrinkwrap</button>
       </div>
     </div>
     
@@ -51,6 +51,7 @@
       <h3>Reference Underlay</h3>
       <div class="file-upload-wrapper">
         <button id="btnUploadImage" class="btn-secondary" onclick="document.getElementById('bgImageUpload').click()">Upload Reference Image</button>
+        <button id="btnRemoveImage" class="btn-secondary" style="display:none; margin-top:5px; color:#ff6b6b; border-color: rgba(255,107,107,0.3);">Remove Image</button>
         <input type="file" id="bgImageUpload" accept="image/png, image/jpeg" style="display:none">
       </div>
       <div class="control-group">

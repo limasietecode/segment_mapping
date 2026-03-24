@@ -20,6 +20,8 @@ let isDragging = false;
 let dragOffsetX = 0;
 let dragOffsetY = 0;
 
+let shrinkwrapActive = false;
+
 // Setup UI Listeners
 document.getElementById('shapeCount').addEventListener('input', (e) => {
     document.getElementById('shapeCountVal').textContent = e.target.value;
@@ -57,10 +59,24 @@ btnFloor.addEventListener('click', () => {
     draw();
 });
 
-document.getElementById('btnShrinkwrap').addEventListener('click', () => {
-    if (shapes.length < 3) return;
-    shrinkwrapShape = { isShrinkwrap: true, fillColor: currentClassColor, vertices: [] };
-    updateShrinkwrap();
+const btnShrinkwrap = document.getElementById('btnShrinkwrap');
+btnShrinkwrap.addEventListener('click', () => {
+    shrinkwrapActive = !shrinkwrapActive;
+    if (shrinkwrapActive) {
+        if (shapes.length < 3) {
+            shrinkwrapActive = false;
+            return;
+        }
+        shrinkwrapShape = { isShrinkwrap: true, fillColor: currentClassColor, vertices: [] };
+        updateShrinkwrap();
+        btnShrinkwrap.textContent = "Remove Shrinkwrap";
+        btnShrinkwrap.classList.add('active');
+    } else {
+        shrinkwrapShape = null;
+        btnShrinkwrap.textContent = "Compute Shrinkwrap";
+        btnShrinkwrap.classList.remove('active');
+        draw();
+    }
 });
 
 document.getElementById('btnExportPNG').addEventListener('click', () => {
@@ -81,6 +97,15 @@ document.getElementById('btnExportPNG').addEventListener('click', () => {
 });
 
 const bgImageUpload = document.getElementById('bgImageUpload');
+const btnRemoveImage = document.getElementById('btnRemoveImage');
+
+btnRemoveImage.addEventListener('click', () => {
+    bgImage = null;
+    bgImageUpload.value = '';
+    btnRemoveImage.style.display = 'none';
+    draw();
+});
+
 bgImageUpload.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -89,6 +114,7 @@ bgImageUpload.addEventListener('change', (e) => {
         const img = new Image();
         img.onload = () => {
             bgImage = img;
+            btnRemoveImage.style.display = 'block';
             draw();
         };
         img.src = event.target.result;
@@ -431,5 +457,34 @@ function draw() {
     }
 }
 
+// Keydown Events & Resize
+window.addEventListener('keydown', (e) => {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedShape) {
+        if (selectedShape.isShrinkwrap) {
+            shrinkwrapShape = null;
+            shrinkwrapActive = false;
+            btnShrinkwrap.textContent = "Compute Shrinkwrap";
+            btnShrinkwrap.classList.remove('active');
+        } else {
+            const idx = shapes.indexOf(selectedShape);
+            if (idx > -1) {
+                shapes.splice(idx, 1);
+            }
+            if (shrinkwrapShape) updateShrinkwrap();
+        }
+        selectedShape = null;
+        draw();
+    }
+});
+
+function resizeCanvas() {
+    const parent = document.getElementById('canvas-wrapper');
+    canvas.width = parent.clientWidth;
+    canvas.height = parent.clientHeight;
+    draw();
+}
+window.addEventListener('resize', resizeCanvas);
+
 // Initial Generation
+resizeCanvas(); // will call draw
 generateShapes();
