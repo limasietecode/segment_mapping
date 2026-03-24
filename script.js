@@ -1077,7 +1077,7 @@ canvas.addEventListener('mousemove', (e) => {
     }
 });
 
-canvas.addEventListener('mouseup', (e) => {
+window.addEventListener('mouseup', (e) => {
     if (isPanning) { isPanning = false; canvas.style.cursor = 'grab'; }
     if (currentTool === 'CALIBRATE' && calibrateStart) {
         const rect = canvas.getBoundingClientRect();
