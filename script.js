@@ -5,7 +5,7 @@ let shapes = [];
 let historyStack = [];
 let historyIndex = -1;
 
-let currentTool = "SELECT"; // SELECT, RECT, POLY, PAN
+let currentTool = "SELECT"; // SELECT, SHAPE, POLY, PAN
 let floorVisible = false;
 let shrinkwrapOffset = 10;
 let shrinkwrapShape = null;
@@ -29,10 +29,14 @@ let panOffsetY = 0;
 let isPanning = false;
 
 // Drawing state
-let isDrawingRect = false;
+let isDrawingShape = false;
 let drawStartX = 0;
 let drawStartY = 0;
 let currentPolyVertices = [];
+
+// Shape Tool Config
+let currentShapeType = 'rect';
+let currentShapeIconClass = 'ph-square';
 
 function saveState() {
     historyStack = historyStack.slice(0, historyIndex + 1);
@@ -103,16 +107,30 @@ window.addEventListener('keydown', (e) => {
     
     // Tools
     if (e.key.toLowerCase() === 'v' && document.activeElement.tagName !== 'INPUT') setTool('SELECT');
-    if (e.key.toLowerCase() === 'm' && document.activeElement.tagName !== 'INPUT') setTool('RECT');
+    if (e.key.toLowerCase() === 'm' && document.activeElement.tagName !== 'INPUT') setTool('SHAPE');
     if (e.key.toLowerCase() === 'p' && document.activeElement.tagName !== 'INPUT') setTool('POLY');
     if (e.key.toLowerCase() === 'h' && document.activeElement.tagName !== 'INPUT') setTool('PAN');
 });
 
 // Setup Toolbar
 document.getElementById('toolSelect').addEventListener('click', () => setTool('SELECT'));
-document.getElementById('toolRect').addEventListener('click', () => setTool('RECT'));
+document.getElementById('toolShape').addEventListener('click', () => setTool('SHAPE'));
 document.getElementById('toolPoly').addEventListener('click', () => setTool('POLY'));
 document.getElementById('toolPan').addEventListener('click', () => setTool('PAN'));
+
+document.querySelectorAll('.flyout-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        document.querySelectorAll('.flyout-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        
+        currentShapeType = btn.dataset.shape;
+        currentShapeIconClass = btn.dataset.icon;
+        
+        document.getElementById('currentShapeIcon').className = `ph ${currentShapeIconClass}`;
+        setTool('SHAPE');
+    });
+});
 
 function setTool(tool) {
     if (currentTool === 'POLY' && currentPolyVertices.length > 2 && tool !== 'POLY') {
@@ -122,17 +140,17 @@ function setTool(tool) {
         if (shrinkwrapActive) updateShrinkwrap();
     }
     currentPolyVertices = [];
-    isDrawingRect = false;
+    isDrawingShape = false;
 
     currentTool = tool;
-    document.querySelectorAll('.toolbar-grid button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
     
     if (tool === 'SELECT') document.getElementById('toolSelect').classList.add('active');
-    if (tool === 'RECT') document.getElementById('toolRect').classList.add('active');
+    if (tool === 'SHAPE') document.getElementById('toolShape').classList.add('active');
     if (tool === 'POLY') document.getElementById('toolPoly').classList.add('active');
     if (tool === 'PAN') document.getElementById('toolPan').classList.add('active');
     
-    canvas.style.cursor = tool === 'PAN' ? 'grab' : (tool === 'POLY' ? 'crosshair' : 'default');
+    canvas.style.cursor = tool === 'PAN' ? 'grab' : (tool === 'POLY' ? 'crosshair' : (tool === 'SHAPE' ? 'crosshair' : 'default'));
     
     if (tool !== 'SELECT') {
         selectedShape = null;
@@ -150,7 +168,7 @@ const propsContainer = document.getElementById('propertiesPanel');
 
 [propX, propY, propW, propH].forEach(input => {
     input.addEventListener('change', (e) => {
-        if (selectedShape && selectedShape.type === 'rect') {
+        if (selectedShape && (selectedShape.type === 'shape' || selectedShape.type === 'rect')) {
             selectedShape.x = parseFloat(propX.value);
             selectedShape.y = parseFloat(propY.value);
             selectedShape.w = parseFloat(propW.value);
@@ -163,7 +181,7 @@ const propsContainer = document.getElementById('propertiesPanel');
 });
 
 function updatePropertiesPanel() {
-    if (selectedShape && selectedShape.type === 'rect') {
+    if (selectedShape && (selectedShape.type === 'shape' || selectedShape.type === 'rect')) {
         propsContainer.style.display = 'block';
         propX.value = Math.round(selectedShape.x);
         propY.value = Math.round(selectedShape.y);
@@ -301,7 +319,7 @@ function getSnapPoint(mx, my) {
     const snapDist = 10;
     for (let s of shapes) {
         if (s === selectedShape) continue;
-        if (s.type === 'rect') {
+        if (s.type === 'shape' || s.type === 'rect') {
             const pts = [
                 {x: s.x - s.w/2, y: s.y - s.h/2},
                 {x: s.x + s.w/2, y: s.y - s.h/2},
@@ -357,10 +375,9 @@ canvas.addEventListener('mousedown', (e) => {
         return;
     }
 
-    // Snapping doesn't generally apply to click start of rect, unless we want it to
     const snap = getSnapPoint(mx, my);
-    if (currentTool === 'RECT') {
-        isDrawingRect = true;
+    if (currentTool === 'SHAPE') {
+        isDrawingShape = true;
         drawStartX = snap.x;
         drawStartY = snap.y;
         return;
@@ -370,7 +387,7 @@ canvas.addEventListener('mousedown', (e) => {
     let clickedOnShape = false;
     for (let i = shapes.length - 1; i >= 0; i--) {
         const s = shapes[i];
-        if (s.type === 'rect') {
+        if (s.type === 'shape' || s.type === 'rect') {
             const corner = getResizeCorner(s, mx, my);
             if (corner) {
                 selectedShape = s; resizing = true; resizeCorner = corner; clickedOnShape = true; break;
@@ -378,14 +395,13 @@ canvas.addEventListener('mousedown', (e) => {
                 selectedShape = s; isDragging = true; dragOffsetX = s.x - mx; dragOffsetY = s.y - my; clickedOnShape = true; break;
             }
         } else if (s.type === 'poly') {
-            // Check vertex drag
             let vertexClicked = -1;
             for(let v=0; v<s.vertices.length; v++) {
                 if (Math.hypot(mx - s.vertices[v].x, my - s.vertices[v].y) < 8) { vertexClicked = v; break; }
             }
             if (vertexClicked > -1) {
                 selectedShape = s; resizing = true; resizeCorner = "v" + vertexClicked; clickedOnShape = true; break;
-            } else if (ptInConvexPolygon(mx, my, s.vertices)) { // assumes convex for now, or just bounding box
+            } else if (ptInConvexPolygon(mx, my, s.vertices)) {
                 selectedShape = s; isDragging = true; dragOffsetX = mx; dragOffsetY = my; clickedOnShape = true; break;
             }
         }
@@ -415,7 +431,7 @@ canvas.addEventListener('mousemove', (e) => {
     let rawMx = e.clientX - rect.left - panOffsetX;
     let rawMy = e.clientY - rect.top - panOffsetY;
     let snap = getSnapPoint(rawMx, rawMy);
-    let mx = e.shiftKey ? rawMx : snap.x; // Shift forces free move/draw, else snap
+    let mx = e.shiftKey ? rawMx : snap.x; 
     let my = e.shiftKey ? rawMy : snap.y;
 
     if (isPanning) {
@@ -425,13 +441,15 @@ canvas.addEventListener('mousemove', (e) => {
         return;
     }
 
-    if (isDrawingRect) {
+    if (isDrawingShape) {
         draw(); // redraw existing
         ctx.fillStyle = currentClassColor;
         ctx.globalAlpha = 0.5;
-        let rw = mx - drawStartX;
-        let rh = my - drawStartY;
-        ctx.fillRect(drawStartX, drawStartY, rw, rh);
+        let rw = Math.abs(mx - drawStartX);
+        let rh = Math.abs(my - drawStartY);
+        let rx = drawStartX + (mx - drawStartX)/2;
+        let ry = drawStartY + (my - drawStartY)/2;
+        drawShapePrimitive(ctx, currentShapeType, rx, ry, rw, rh);
         ctx.globalAlpha = 1.0;
         return;
     }
@@ -450,7 +468,7 @@ canvas.addEventListener('mousemove', (e) => {
 
     if (currentTool === 'SELECT') {
         if (resizing && selectedShape) {
-            if (selectedShape.type === 'rect') {
+            if (selectedShape.type === 'shape' || selectedShape.type === 'rect') {
                 resizeShape(selectedShape, mx, my, resizeCorner);
             } else if (selectedShape.type === 'poly') {
                 let vIdx = parseInt(resizeCorner.substring(1));
@@ -461,7 +479,7 @@ canvas.addEventListener('mousemove', (e) => {
             updatePropertiesPanel();
             draw();
         } else if (isDragging && selectedShape && !selectedShape.isShrinkwrap) {
-            if (selectedShape.type === 'rect') {
+            if (selectedShape.type === 'shape' || selectedShape.type === 'rect') {
                 selectedShape.x = mx + dragOffsetX;
                 selectedShape.y = my + dragOffsetY;
             } else if (selectedShape.type === 'poly') {
@@ -478,7 +496,7 @@ canvas.addEventListener('mousemove', (e) => {
             let hoveringHndl = false, hoveringShape = false;
             for (let i = shapes.length - 1; i >= 0; i--) {
                 const s = shapes[i];
-                if (s.type === 'rect') {
+                if (s.type === 'shape' || s.type === 'rect') {
                     if (getResizeCorner(s, rawMx, rawMy)) { hoveringHndl = true; break; }
                     else if (rawMx > s.x - s.w/2 && rawMx < s.x + s.w/2 && rawMy > s.y - s.h/2 && rawMy < s.y + s.h/2) { hoveringShape = true; break; }
                 } else if (s.type === 'poly') {
@@ -498,7 +516,7 @@ canvas.addEventListener('mouseup', (e) => {
         isPanning = false;
         canvas.style.cursor = 'grab';
     }
-    if (isDrawingRect) {
+    if (isDrawingShape) {
         const rect = canvas.getBoundingClientRect();
         let rawMx = e.clientX - rect.left - panOffsetX;
         let rawMy = e.clientY - rect.top - panOffsetY;
@@ -510,7 +528,8 @@ canvas.addEventListener('mouseup', (e) => {
         let h = Math.abs(my - drawStartY);
         if (w > 10 && h > 10) {
             shapes.push({
-                type: 'rect',
+                type: 'shape',
+                subType: currentShapeType,
                 x: drawStartX + (mx - drawStartX)/2,
                 y: drawStartY + (my - drawStartY)/2,
                 w: w, h: h,
@@ -519,7 +538,7 @@ canvas.addEventListener('mouseup', (e) => {
             if (shrinkwrapActive) updateShrinkwrap();
             saveState();
         }
-        isDrawingRect = false;
+        isDrawingShape = false;
         draw();
     }
     if (resizing || isDragging) {
@@ -572,7 +591,6 @@ function resizeShape(s, mx, my, corner) {
 function ptInConvexPolygon(px, py, vertices) {
     if (!vertices || vertices.length < 3) return false;
     let crossProduct = (a, b, c) => (b.x-a.x)*(c.y-a.y) - (b.y-a.y)*(c.x-a.x);
-    // Determine winding
     let initialSign = crossProduct(vertices[0], vertices[1], {x: px, y: py}) > 0;
     for (let i = 1; i < vertices.length; i++) {
         let nxt = (i+1)%vertices.length;
@@ -586,7 +604,7 @@ function updateShrinkwrap() {
     if (!shrinkwrapShape || shapes.length < 3) return;
     let envelopePoints = [];
     shapes.forEach(s => {
-        if (s.type === 'rect') {
+        if (s.type === 'shape' || s.type === 'rect') {
             envelopePoints.push({x: s.x - s.w/2 - shrinkwrapOffset, y: s.y - s.h/2 - shrinkwrapOffset});
             envelopePoints.push({x: s.x + s.w/2 + shrinkwrapOffset, y: s.y - s.h/2 - shrinkwrapOffset});
             envelopePoints.push({x: s.x - s.w/2 - shrinkwrapOffset, y: s.y + s.h/2 + shrinkwrapOffset});
@@ -622,6 +640,47 @@ function computeConvexHull(points) {
     return lower.concat(upper);
 }
 
+function drawShapePrimitive(ctx, type, cx, cy, w, h) {
+    let dx = cx - w/2;
+    let dy = cy - h/2;
+    ctx.beginPath();
+    if (type === 'rect') {
+        ctx.rect(dx, dy, w, h);
+    } else if (type === 'ellipse') {
+        ctx.ellipse(cx, cy, w/2, h/2, 0, 0, Math.PI*2);
+    } else if (type === 'round_rect') {
+        ctx.roundRect(dx, dy, w, h, Math.min(w, h) * 0.15);
+    } else if (type === 'triangle') {
+        ctx.moveTo(cx, dy);
+        ctx.lineTo(dx + w, dy + h);
+        ctx.lineTo(dx, dy + h);
+    } else if (type === 'diamond') {
+        ctx.moveTo(cx, dy);
+        ctx.lineTo(dx + w, cy);
+        ctx.lineTo(cx, dy + h);
+        ctx.lineTo(dx, cy);
+    } else if (type === 'trapezoid') {
+        let inset = w * 0.25;
+        ctx.moveTo(dx + inset, dy);
+        ctx.lineTo(dx + w - inset, dy);
+        ctx.lineTo(dx + w, dy + h);
+        ctx.lineTo(dx, dy + h);
+    } else if (type === 'human') {
+        const r = Math.min(w,h) * 0.15;
+        ctx.arc(cx, dy + r, r, 0, Math.PI*2); // Head
+        ctx.moveTo(cx - w*0.25, dy + r*2.5); // left shoulder
+        ctx.quadraticCurveTo(cx, dy + r*1.8, cx + w*0.25, dy + r*2.5); // shoulders/neck
+        ctx.lineTo(cx + w*0.2, dy + h); // right outer
+        ctx.lineTo(cx + w*0.05, dy + h); // right inner
+        ctx.lineTo(cx, dy + h*0.6); // crotch
+        ctx.lineTo(cx - w*0.05, dy + h); // left inner
+        ctx.lineTo(cx - w*0.2, dy + h); // left outer
+        ctx.lineTo(cx - w*0.25, dy + r*2.5); // back to shoulder
+    }
+    ctx.closePath();
+    ctx.fill();
+}
+
 function draw() {
     ctx.fillStyle = `rgb(${bgColor}, ${bgColor}, ${bgColor})`;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -631,7 +690,6 @@ function draw() {
         const scale = Math.min(canvas.width / bgImage.width, canvas.height / bgImage.height);
         const imgW = bgImage.width * scale;
         const imgH = bgImage.height * scale;
-        // Panning applies to image as well
         ctx.drawImage(bgImage, panOffsetX, panOffsetY, imgW, imgH);
         ctx.globalAlpha = 1.0;
     }
@@ -667,8 +725,9 @@ function draw() {
         ctx.fillStyle = s.fillColor;
         ctx.globalAlpha = currentTool === "EXPORTING" ? 1.0 : 0.85;
         
-        if (s.type === 'rect') {
-            ctx.fillRect(s.x - s.w/2, s.y - s.h/2, s.w, s.h);
+        if (s.type === 'shape' || s.type === 'rect') {
+            let stype = s.subType || 'rect'; // gracefully handle prior JSONs
+            drawShapePrimitive(ctx, stype, s.x, s.y, s.w, s.h);
         } else if (s.type === 'poly' && s.vertices.length > 0) {
             ctx.beginPath();
             ctx.moveTo(s.vertices[0].x, s.vertices[0].y);
@@ -683,7 +742,7 @@ function draw() {
             ctx.fillStyle = "white"; ctx.strokeStyle = "rgba(0,0,0,0.5)"; ctx.lineWidth = 1;
             const drawHndl = (hx, hy) => { ctx.beginPath(); ctx.arc(hx, hy, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); };
             
-            if (s.type === 'rect') {
+            if (s.type === 'shape' || s.type === 'rect') {
                 drawHndl(s.x - s.w/2, s.y - s.h/2);
                 drawHndl(s.x + s.w/2, s.y - s.h/2);
                 drawHndl(s.x - s.w/2, s.y + s.h/2);
@@ -701,7 +760,6 @@ function draw() {
         }
     }
     
-    // Draw active poly lines
     if (currentPolyVertices.length > 0 && currentTool !== "EXPORTING") {
         ctx.strokeStyle = '#2d5aff';
         ctx.lineWidth = 2;
@@ -710,7 +768,6 @@ function draw() {
         for(let i=1; i<currentPolyVertices.length; i++) ctx.lineTo(currentPolyVertices[i].x, currentPolyVertices[i].y);
         ctx.stroke();
     }
-    
     ctx.restore();
 }
 

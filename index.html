@@ -14,7 +14,23 @@
       <!-- Left Toolbar (Illustrator style) -->
       <div id="left-toolbar">
         <button id="toolSelect" title="Select (V)" class="tool-btn active"><i class="ph ph-cursor"></i></button>
-        <button id="toolRect" title="Rectangle (M)" class="tool-btn"><i class="ph ph-square"></i></button>
+        
+        <div class="tool-group">
+          <button id="toolShape" title="Shapes (M)" class="tool-btn">
+            <i id="currentShapeIcon" class="ph ph-square"></i>
+            <span class="flyout-arrow"></span>
+          </button>
+          <div class="flyout-menu" id="shapeFlyout">
+            <button class="flyout-btn active" data-shape="rect" data-icon="ph-square"><i class="ph ph-square"></i> Rectangle</button>
+            <button class="flyout-btn" data-shape="ellipse" data-icon="ph-circle"><i class="ph ph-circle"></i> Ellipse</button>
+            <button class="flyout-btn" data-shape="round_rect" data-icon="ph-app-window"><i class="ph ph-app-window"></i> Rounded Rect</button>
+            <button class="flyout-btn" data-shape="triangle" data-icon="ph-triangle"><i class="ph ph-triangle"></i> Triangle</button>
+            <button class="flyout-btn" data-shape="diamond" data-icon="ph-diamond"><i class="ph ph-diamond"></i> Diamond</button>
+            <button class="flyout-btn" data-shape="trapezoid" data-icon="ph-navigation-arrow"><i class="ph ph-navigation-arrow"></i> Trapezoid</button>
+            <button class="flyout-btn" data-shape="human" data-icon="ph-user"><i class="ph ph-user"></i> Human Scale</button>
+          </div>
+        </div>
+
         <button id="toolPoly" title="Polygon (P)" class="tool-btn"><i class="ph ph-polygon"></i></button>
         <button id="toolPan" title="Pan (H)" class="tool-btn"><i class="ph ph-hand-palm"></i></button>
         <div class="divider"></div>
