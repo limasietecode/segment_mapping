@@ -5,7 +5,7 @@ let shapes = [];
 let historyStack = [];
 let historyIndex = -1;
 
-let currentTool = "SELECT"; // SELECT, SHAPE, POLY, PAN
+let currentTool = "SELECT"; // SELECT, SHAPE, POLY, CURVE, PAN, TRANSFORM
 let floorVisible = false;
 let shrinkwrapOffset = 10;
 let shrinkwrapShape = null;
@@ -47,7 +47,7 @@ let transformStartAngle = 0;
 let transformStartMouse = null;
 
 function convertShapeToPoly(s) {
-    if (s.type === 'poly') return JSON.parse(JSON.stringify(s));
+    if (s.type === 'poly' || s.type === 'curve') return JSON.parse(JSON.stringify(s));
     let v = [];
     if (s.type === 'shape' || s.type === 'rect') {
         const dx = s.x - s.w/2, dy = s.y - s.h/2;
@@ -58,6 +58,40 @@ function convertShapeToPoly(s) {
         else v = [{x:dx,y:dy}, {x:dx+s.w,y:dy}, {x:dx+s.w,y:dy+s.h}, {x:dx,y:dy+s.h}]; // rect, round_rect, human bbox
     }
     return { type: 'poly', vertices: v, fillColor: s.fillColor };
+}
+
+function chaikinClosed(vertices, iterations) {
+    if (vertices.length < 3) return vertices;
+    let pts = vertices;
+    for (let i = 0; i < iterations; i++) {
+        let newPts = [];
+        for (let j = 0; j < pts.length; j++) {
+            let p1 = pts[j];
+            let p2 = pts[(j + 1) % pts.length];
+            newPts.push({ x: 0.75 * p1.x + 0.25 * p2.x, y: 0.75 * p1.y + 0.25 * p2.y });
+            newPts.push({ x: 0.25 * p1.x + 0.75 * p2.x, y: 0.25 * p1.y + 0.75 * p2.y });
+        }
+        pts = newPts;
+    }
+    return pts;
+}
+
+function chaikinOpen(vertices, iterations) {
+    if (vertices.length < 3) return vertices;
+    let pts = vertices;
+    for (let i = 0; i < iterations; i++) {
+        let newPts = [];
+        newPts.push(pts[0]);
+        for (let j = 0; j < pts.length - 1; j++) {
+            let p1 = pts[j];
+            let p2 = pts[j + 1];
+            newPts.push({ x: 0.75 * p1.x + 0.25 * p2.x, y: 0.75 * p1.y + 0.25 * p2.y });
+            newPts.push({ x: 0.25 * p1.x + 0.75 * p2.x, y: 0.25 * p1.y + 0.75 * p2.y });
+        }
+        newPts.push(pts[pts.length - 1]);
+        pts = newPts;
+    }
+    return pts;
 }
 
 function saveState() {
@@ -75,8 +109,7 @@ window.addEventListener('keydown', (e) => {
         if (idx > 0) {
             shapes.splice(idx, 1);
             shapes.splice(idx - 1, 0, selectedShape);
-            saveState();
-            draw();
+            saveState(); draw();
         }
     }
     if (selectedShape && e.key === ']') {
@@ -84,8 +117,7 @@ window.addEventListener('keydown', (e) => {
         if (idx > -1 && idx < shapes.length - 1) {
             shapes.splice(idx, 1);
             shapes.splice(idx + 1, 0, selectedShape);
-            saveState();
-            draw();
+            saveState(); draw();
         }
     }
     if ((e.key === 'Delete' || e.key === 'Backspace') && selectedShape) {
@@ -99,10 +131,7 @@ window.addEventListener('keydown', (e) => {
             if (idx > -1) shapes.splice(idx, 1);
             if (shrinkwrapActive) updateShrinkwrap();
         }
-        selectedShape = null;
-        updatePropertiesPanel();
-        saveState();
-        draw();
+        selectedShape = null; updatePropertiesPanel(); saveState(); draw();
     }
     if (e.ctrlKey && e.key.toLowerCase() === 'z') {
         if (historyIndex > 0) {
@@ -110,9 +139,7 @@ window.addEventListener('keydown', (e) => {
             const state = historyStack[historyIndex];
             shapes = JSON.parse(JSON.stringify(state.shapes));
             shrinkwrapShape = state.shrinkwrapShape ? JSON.parse(JSON.stringify(state.shrinkwrapShape)) : null;
-            selectedShape = null;
-            updatePropertiesPanel();
-            draw();
+            selectedShape = null; updatePropertiesPanel(); draw();
         }
     }
     if (e.ctrlKey && e.key.toLowerCase() === 'y') {
@@ -121,9 +148,7 @@ window.addEventListener('keydown', (e) => {
             const state = historyStack[historyIndex];
             shapes = JSON.parse(JSON.stringify(state.shapes));
             shrinkwrapShape = state.shrinkwrapShape ? JSON.parse(JSON.stringify(state.shrinkwrapShape)) : null;
-            selectedShape = null;
-            updatePropertiesPanel();
-            draw();
+            selectedShape = null; updatePropertiesPanel(); draw();
         }
     }
     
@@ -131,13 +156,16 @@ window.addEventListener('keydown', (e) => {
     if (e.key.toLowerCase() === 'v' && document.activeElement.tagName !== 'INPUT') setTool('SELECT');
     if (e.key.toLowerCase() === 'm' && document.activeElement.tagName !== 'INPUT') setTool('SHAPE');
     if (e.key.toLowerCase() === 'p' && document.activeElement.tagName !== 'INPUT') setTool('POLY');
+    if (e.key.toLowerCase() === 'c' && document.activeElement.tagName !== 'INPUT') setTool('CURVE');
     if (e.key.toLowerCase() === 'h' && document.activeElement.tagName !== 'INPUT') setTool('PAN');
+    if (e.key.toLowerCase() === 't' && document.activeElement.tagName !== 'INPUT') setTool('TRANSFORM');
 });
 
 // Setup Toolbar
 document.getElementById('toolSelect').addEventListener('click', () => setTool('SELECT'));
 document.getElementById('toolShape').addEventListener('click', () => setTool('SHAPE'));
 document.getElementById('toolPoly').addEventListener('click', () => setTool('POLY'));
+document.getElementById('toolCurve').addEventListener('click', () => setTool('CURVE'));
 document.getElementById('toolTransform').addEventListener('click', () => setTool('TRANSFORM'));
 document.getElementById('toolPan').addEventListener('click', () => setTool('PAN'));
 
@@ -151,6 +179,7 @@ document.querySelectorAll('.flyout-btn').forEach(btn => {
         setTool('SHAPE');
     });
 });
+
 document.querySelectorAll('.flyout-btn-tx').forEach(btn => {
     btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -219,11 +248,9 @@ document.getElementById('btnApplyPolarArray').addEventListener('click', () => {
     selectedShape = null; setTool('SELECT'); saveState(); draw();
 });
 
-
 function setTool(tool) {
-    if (currentTool === 'POLY' && currentPolyVertices.length > 2 && tool !== 'POLY') {
-        // Complete poly if switching tool
-        shapes.push({ type: 'poly', vertices: currentPolyVertices, fillColor: currentClassColor });
+    if ((currentTool === 'POLY' || currentTool === 'CURVE') && currentPolyVertices.length > 2 && tool !== currentTool) {
+        shapes.push({ type: currentTool === 'POLY' ? 'poly' : 'curve', vertices: currentPolyVertices, fillColor: currentClassColor });
         saveState();
         if (shrinkwrapActive) updateShrinkwrap();
     }
@@ -236,14 +263,15 @@ function setTool(tool) {
     if (tool === 'SELECT') document.getElementById('toolSelect').classList.add('active');
     if (tool === 'SHAPE') document.getElementById('toolShape').classList.add('active');
     if (tool === 'POLY') document.getElementById('toolPoly').classList.add('active');
+    if (tool === 'CURVE') document.getElementById('toolCurve').classList.add('active');
     if (tool === 'TRANSFORM') document.getElementById('toolTransform').classList.add('active');
     if (tool === 'PAN') document.getElementById('toolPan').classList.add('active');
     
     if (tool !== 'TRANSFORM') document.getElementById('array-panel').style.display = 'none';
     
-    canvas.style.cursor = tool === 'PAN' ? 'grab' : (tool === 'POLY' ? 'crosshair' : (tool === 'SHAPE' ? 'crosshair' : 'default'));
+    canvas.style.cursor = tool === 'PAN' ? 'grab' : ((tool === 'POLY' || tool === 'CURVE' || tool === 'SHAPE') ? 'crosshair' : 'default');
     
-    if (tool !== 'SELECT') {
+    if (tool !== 'SELECT' && tool !== 'TRANSFORM') {
         selectedShape = null;
         updatePropertiesPanel();
     }
@@ -265,8 +293,7 @@ const propsContainer = document.getElementById('propertiesPanel');
             selectedShape.w = parseFloat(propW.value);
             selectedShape.h = parseFloat(propH.value);
             if (shrinkwrapActive) updateShrinkwrap();
-            saveState();
-            draw();
+            saveState(); draw();
         }
     });
 });
@@ -288,14 +315,10 @@ document.getElementById('semanticColor').addEventListener('change', (e) => {
     currentClassColor = e.target.value;
     if (selectedShape) {
         selectedShape.fillColor = currentClassColor;
-        saveState();
-        draw();
+        saveState(); draw();
     }
 });
-document.getElementById('bgColor').addEventListener('input', (e) => {
-    bgColor = parseInt(e.target.value);
-    draw();
-});
+document.getElementById('bgColor').addEventListener('input', (e) => { bgColor = parseInt(e.target.value); draw(); });
 document.getElementById('shrinkOffset').addEventListener('input', (e) => {
     document.getElementById('shrinkOffsetVal').textContent = e.target.value;
     shrinkwrapOffset = parseInt(e.target.value);
@@ -304,8 +327,7 @@ document.getElementById('shrinkOffset').addEventListener('input', (e) => {
 const btnFloor = document.getElementById('btnFloor');
 btnFloor.addEventListener('click', () => {
     floorVisible = !floorVisible;
-    if(floorVisible) btnFloor.classList.add('active');
-    else btnFloor.classList.remove('active');
+    if(floorVisible) btnFloor.classList.add('active'); else btnFloor.classList.remove('active');
     btnFloor.title = floorVisible ? "Remove Floor Plane" : "Add Floor Plane";
     draw();
 });
@@ -313,27 +335,22 @@ const btnShrinkwrap = document.getElementById('btnShrinkwrap');
 btnShrinkwrap.addEventListener('click', () => {
     shrinkwrapActive = !shrinkwrapActive;
     if (shrinkwrapActive) {
-        if (shapes.length < 3) {
-            shrinkwrapActive = false; return;
-        }
+        if (shapes.length < 3) { shrinkwrapActive = false; return; }
         shrinkwrapShape = { isShrinkwrap: true, fillColor: currentClassColor, vertices: [] };
         updateShrinkwrap();
-        btnShrinkwrap.title = "Remove Shrinkwrap";
-        btnShrinkwrap.classList.add('active');
+        btnShrinkwrap.title = "Remove Shrinkwrap"; btnShrinkwrap.classList.add('active');
         saveState();
     } else {
         shrinkwrapShape = null;
-        btnShrinkwrap.title = "Compute Shrinkwrap";
-        btnShrinkwrap.classList.remove('active');
-        saveState();
-        draw();
+        btnShrinkwrap.title = "Compute Shrinkwrap"; btnShrinkwrap.classList.remove('active');
+        saveState(); draw();
     }
 });
 document.getElementById('btnExportPNG').addEventListener('click', () => {
     const wasSelected = selectedShape;
     selectedShape = null;
     let oldTool = currentTool;
-    currentTool = "EXPORTING"; // forces solid opacity rendering
+    currentTool = "EXPORTING"; 
     draw(); 
     const link = document.createElement('a');
     link.download = `mask_${Date.now()}.png`;
@@ -347,10 +364,7 @@ document.getElementById('btnExportPNG').addEventListener('click', () => {
 const bgImageUpload = document.getElementById('bgImageUpload');
 const btnRemoveImage = document.getElementById('btnRemoveImage');
 btnRemoveImage.addEventListener('click', () => {
-    bgImage = null;
-    bgImageUpload.value = '';
-    btnRemoveImage.style.display = 'none';
-    draw();
+    bgImage = null; bgImageUpload.value = ''; btnRemoveImage.style.display = 'none'; draw();
 });
 bgImageUpload.addEventListener('change', (e) => {
     const file = e.target.files[0];
@@ -390,16 +404,9 @@ document.getElementById('jsonUpload').addEventListener('change', (e) => {
             panOffsetX = data.panOffsetX || 0;
             panOffsetY = data.panOffsetY || 0;
             document.getElementById('bgColor').value = bgColor;
-            if (floorVisible) {
-                btnFloor.title = "Remove Floor Plane";
-                btnFloor.classList.add('active');
-            } else {
-                btnFloor.title = "Add Floor Plane";
-                btnFloor.classList.remove('active');
-            }
-            selectedShape = null;
-            saveState();
-            draw();
+            if (floorVisible) { btnFloor.title = "Remove Floor Plane"; btnFloor.classList.add('active'); } 
+            else { btnFloor.title = "Add Floor Plane"; btnFloor.classList.remove('active'); }
+            selectedShape = null; saveState(); draw();
         } catch (err) { alert("Error parsing JSON file"); }
     };
     reader.readAsText(file);
@@ -412,29 +419,20 @@ function getSnapPoint(mx, my) {
         if (s === selectedShape) continue;
         if (s.type === 'shape' || s.type === 'rect') {
             const pts = [
-                {x: s.x - s.w/2, y: s.y - s.h/2},
-                {x: s.x + s.w/2, y: s.y - s.h/2},
-                {x: s.x - s.w/2, y: s.y + s.h/2},
-                {x: s.x + s.w/2, y: s.y + s.h/2}
+                {x: s.x - s.w/2, y: s.y - s.h/2}, {x: s.x + s.w/2, y: s.y - s.h/2},
+                {x: s.x - s.w/2, y: s.y + s.h/2}, {x: s.x + s.w/2, y: s.y + s.h/2}
             ];
-            for (let p of pts) {
-                if (Math.hypot(mx - p.x, my - p.y) < snapDist) return p;
-            }
-        } else if (s.type === 'poly') {
-            for (let p of s.vertices) {
-                if (Math.hypot(mx - p.x, my - p.y) < snapDist) return p;
-            }
+            for (let p of pts) if (Math.hypot(mx - p.x, my - p.y) < snapDist) return p;
+        } else if (s.type === 'poly' || s.type === 'curve') {
+            for (let p of s.vertices) if (Math.hypot(mx - p.x, my - p.y) < snapDist) return p;
         }
     }
-    return {x: mx, y: my}; // No snap
+    return {x: mx, y: my};
 }
 
 function getMousePos(e) {
     const rect = canvas.getBoundingClientRect();
-    return {
-        mx: e.clientX - rect.left - panOffsetX,
-        my: e.clientY - rect.top - panOffsetY
-    };
+    return { mx: e.clientX - rect.left - panOffsetX, my: e.clientY - rect.top - panOffsetY };
 }
 
 // Canvas Interaction
@@ -444,34 +442,26 @@ canvas.addEventListener('mousedown', (e) => {
     let my = e.clientY - rect.top - panOffsetY;
     
     if (currentTool === 'PAN') {
-        isPanning = true;
-        dragOffsetX = e.clientX - panOffsetX;
-        dragOffsetY = e.clientY - panOffsetY;
-        canvas.style.cursor = 'grabbing';
-        return;
+        isPanning = true; dragOffsetX = e.clientX - panOffsetX; dragOffsetY = e.clientY - panOffsetY;
+        canvas.style.cursor = 'grabbing'; return;
     }
 
-    if (currentTool === 'POLY') {
+    if (currentTool === 'POLY' || currentTool === 'CURVE') {
         const snap = getSnapPoint(mx, my);
-        // Double click equivalent or close to start
         if (currentPolyVertices.length > 2 && Math.hypot(snap.x - currentPolyVertices[0].x, snap.y - currentPolyVertices[0].y) < 15) {
-            shapes.push({ type: 'poly', vertices: [...currentPolyVertices], fillColor: currentClassColor });
+            shapes.push({ type: currentTool === 'POLY' ? 'poly' : 'curve', vertices: [...currentPolyVertices], fillColor: currentClassColor });
             currentPolyVertices = [];
             if (shrinkwrapActive) updateShrinkwrap();
             saveState();
         } else {
             currentPolyVertices.push(snap);
         }
-        draw();
-        return;
+        draw(); return;
     }
 
     const snap = getSnapPoint(mx, my);
     if (currentTool === 'SHAPE') {
-        isDrawingShape = true;
-        drawStartX = snap.x;
-        drawStartY = snap.y;
-        return;
+        isDrawingShape = true; drawStartX = snap.x; drawStartY = snap.y; return;
     }
 
     if (currentTool === 'TRANSFORM' && selectedShape) {
@@ -479,7 +469,7 @@ canvas.addEventListener('mousedown', (e) => {
             if (currentTransformType === 'copy') {
                 let clone = JSON.parse(JSON.stringify(selectedShape));
                 if (clone.type === 'shape' || clone.type === 'rect') { clone.x += 30; clone.y += 30; }
-                else if (clone.type === 'poly') { clone.vertices.forEach(v => {v.x+=30;v.y+=30;}); }
+                else if (clone.type === 'poly' || clone.type === 'curve') { clone.vertices.forEach(v => {v.x+=30;v.y+=30;}); }
                 shapes.push(clone); selectedShape = clone; saveState(); draw(); return;
             }
             if (currentTransformType === 'mirror') {
@@ -489,8 +479,8 @@ canvas.addEventListener('mousedown', (e) => {
                 const idx = shapes.indexOf(selectedShape);
                 shapes[idx] = poly; selectedShape = poly; saveState(); draw(); return;
             }
-            // Rotate & Shear initialization
-            if (selectedShape.type !== 'poly') {
+            // Rotate & Shear
+            if (selectedShape.type !== 'poly' && selectedShape.type !== 'curve') {
                 const poly = convertShapeToPoly(selectedShape);
                 const idx = shapes.indexOf(selectedShape); shapes[idx] = poly; selectedShape = poly;
             }
@@ -515,7 +505,7 @@ canvas.addEventListener('mousedown', (e) => {
             } else if (mx > s.x - s.w/2 && mx < s.x + s.w/2 && my > s.y - s.h/2 && my < s.y + s.h/2) {
                 selectedShape = s; isDragging = true; dragOffsetX = s.x - mx; dragOffsetY = s.y - my; clickedOnShape = true; break;
             }
-        } else if (s.type === 'poly') {
+        } else if (s.type === 'poly' || s.type === 'curve') {
             let vertexClicked = -1;
             for(let v=0; v<s.vertices.length; v++) {
                 if (Math.hypot(mx - s.vertices[v].x, my - s.vertices[v].y) < 8) { vertexClicked = v; break; }
@@ -533,18 +523,14 @@ canvas.addEventListener('mousedown', (e) => {
        selectedShape = shrinkwrapShape; clickedOnShape = true;
     }
     
-    if (!clickedOnShape) {
-        selectedShape = null;
-    }
+    if (!clickedOnShape) selectedShape = null;
     
     const selColor = document.getElementById('semanticColor');
     if (selectedShape && !selectedShape.isShrinkwrap) {
-        selColor.value = selectedShape.fillColor;
-        currentClassColor = selectedShape.fillColor;
+        selColor.value = selectedShape.fillColor; currentClassColor = selectedShape.fillColor;
     }
     
-    updatePropertiesPanel();
-    draw();
+    updatePropertiesPanel(); draw();
 });
 
 canvas.addEventListener('mousemove', (e) => {
@@ -556,34 +542,27 @@ canvas.addEventListener('mousemove', (e) => {
     let my = e.shiftKey ? rawMy : snap.y;
 
     if (isPanning) {
-        panOffsetX = e.clientX - dragOffsetX;
-        panOffsetY = e.clientY - dragOffsetY;
-        draw();
-        return;
+        panOffsetX = e.clientX - dragOffsetX; panOffsetY = e.clientY - dragOffsetY; draw(); return;
     }
 
     if (isDrawingShape) {
-        draw(); // redraw existing
-        ctx.fillStyle = currentClassColor;
-        ctx.globalAlpha = 0.5;
-        let rw = Math.abs(mx - drawStartX);
-        let rh = Math.abs(my - drawStartY);
-        let rx = drawStartX + (mx - drawStartX)/2;
-        let ry = drawStartY + (my - drawStartY)/2;
+        draw(); 
+        ctx.fillStyle = currentClassColor; ctx.globalAlpha = 0.5;
+        let rw = Math.abs(mx - drawStartX), rh = Math.abs(my - drawStartY);
+        let rx = drawStartX + (mx - drawStartX)/2, ry = drawStartY + (my - drawStartY)/2;
         drawShapePrimitive(ctx, currentShapeType, rx, ry, rw, rh);
-        ctx.globalAlpha = 1.0;
-        return;
+        ctx.globalAlpha = 1.0; return;
     }
 
-    if (currentTool === 'POLY' && currentPolyVertices.length > 0) {
+    if ((currentTool === 'POLY' || currentTool === 'CURVE') && currentPolyVertices.length > 0) {
         draw();
+        let pts = [...currentPolyVertices, {x: mx, y: my}];
+        if (currentTool === 'CURVE') pts = chaikinOpen(pts, 4);
+        
         ctx.beginPath();
-        ctx.moveTo(currentPolyVertices[currentPolyVertices.length-1].x + panOffsetX, currentPolyVertices[currentPolyVertices.length-1].y + panOffsetY);
-        ctx.lineTo(mx + panOffsetX, my + panOffsetY);
-        ctx.strokeStyle = '#fff';
-        ctx.setLineDash([4, 4]);
-        ctx.stroke();
-        ctx.setLineDash([]);
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for(let i=1; i<pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.strokeStyle = '#fff'; ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([]);
         return;
     }
 
@@ -607,35 +586,29 @@ canvas.addEventListener('mousemove', (e) => {
             }
         }
         if (shrinkwrapActive) updateShrinkwrap();
-        draw();
-        return;
+        draw(); return;
     }
 
     if (currentTool === 'SELECT') {
         if (resizing && selectedShape) {
             if (selectedShape.type === 'shape' || selectedShape.type === 'rect') {
                 resizeShape(selectedShape, mx, my, resizeCorner);
-            } else if (selectedShape.type === 'poly') {
+            } else if (selectedShape.type === 'poly' || selectedShape.type === 'curve') {
                 let vIdx = parseInt(resizeCorner.substring(1));
-                selectedShape.vertices[vIdx].x = mx;
-                selectedShape.vertices[vIdx].y = my;
+                selectedShape.vertices[vIdx].x = mx; selectedShape.vertices[vIdx].y = my;
             }
             if (shrinkwrapActive) updateShrinkwrap();
-            updatePropertiesPanel();
-            draw();
+            updatePropertiesPanel(); draw();
         } else if (isDragging && selectedShape && !selectedShape.isShrinkwrap) {
             if (selectedShape.type === 'shape' || selectedShape.type === 'rect') {
-                selectedShape.x = mx + dragOffsetX;
-                selectedShape.y = my + dragOffsetY;
-            } else if (selectedShape.type === 'poly') {
-                let dx = mx - dragOffsetX;
-                let dy = my - dragOffsetY;
+                selectedShape.x = mx + dragOffsetX; selectedShape.y = my + dragOffsetY;
+            } else if (selectedShape.type === 'poly' || selectedShape.type === 'curve') {
+                let dx = mx - dragOffsetX, dy = my - dragOffsetY;
                 selectedShape.vertices.forEach(v => { v.x += dx; v.y += dy; });
                 dragOffsetX = mx; dragOffsetY = my;
             }
             if (shrinkwrapActive) updateShrinkwrap();
-            updatePropertiesPanel();
-            draw();
+            updatePropertiesPanel(); draw();
         } else {
             // Hover logic
             let hoveringHndl = false, hoveringShape = false;
@@ -644,7 +617,7 @@ canvas.addEventListener('mousemove', (e) => {
                 if (s.type === 'shape' || s.type === 'rect') {
                     if (getResizeCorner(s, rawMx, rawMy)) { hoveringHndl = true; break; }
                     else if (rawMx > s.x - s.w/2 && rawMx < s.x + s.w/2 && rawMy > s.y - s.h/2 && rawMy < s.y + s.h/2) { hoveringShape = true; break; }
-                } else if (s.type === 'poly') {
+                } else if (s.type === 'poly' || s.type === 'curve') {
                     for(let v=0; v<s.vertices.length; v++) if (Math.hypot(rawMx - s.vertices[v].x, rawMy - s.vertices[v].y) < 8) { hoveringHndl = true; break; }
                     if (!hoveringHndl && ptInConvexPolygon(rawMx, rawMy, s.vertices)) { hoveringShape = true; break; }
                 }
@@ -657,51 +630,28 @@ canvas.addEventListener('mousemove', (e) => {
 });
 
 canvas.addEventListener('mouseup', (e) => {
-    if (isPanning) {
-        isPanning = false;
-        canvas.style.cursor = 'grab';
-    }
+    if (isPanning) { isPanning = false; canvas.style.cursor = 'grab'; }
     if (isDrawingShape) {
         const rect = canvas.getBoundingClientRect();
-        let rawMx = e.clientX - rect.left - panOffsetX;
-        let rawMy = e.clientY - rect.top - panOffsetY;
+        let rawMx = e.clientX - rect.left - panOffsetX, rawMy = e.clientY - rect.top - panOffsetY;
         let snap = getSnapPoint(rawMx, rawMy);
-        let mx = e.shiftKey ? rawMx : snap.x;
-        let my = e.shiftKey ? rawMy : snap.y;
-        
-        let w = Math.abs(mx - drawStartX);
-        let h = Math.abs(my - drawStartY);
+        let mx = e.shiftKey ? rawMx : snap.x, my = e.shiftKey ? rawMy : snap.y;
+        let w = Math.abs(mx - drawStartX), h = Math.abs(my - drawStartY);
         if (w > 10 && h > 10) {
-            shapes.push({
-                type: 'shape',
-                subType: currentShapeType,
-                x: drawStartX + (mx - drawStartX)/2,
-                y: drawStartY + (my - drawStartY)/2,
-                w: w, h: h,
-                fillColor: currentClassColor
-            });
+            shapes.push({ type: 'shape', subType: currentShapeType, x: drawStartX + (mx - drawStartX)/2, y: drawStartY + (my - drawStartY)/2, w: w, h: h, fillColor: currentClassColor });
             if (shrinkwrapActive) updateShrinkwrap();
             saveState();
         }
-        isDrawingShape = false;
-        draw();
+        isDrawingShape = false; draw();
     }
-    if (transformActive) {
-        transformActive = false;
-        saveState();
-    }
-    if (resizing || isDragging) {
-        resizing = false;
-        isDragging = false;
-        saveState();
-    }
+    if (transformActive) { transformActive = false; saveState(); }
+    if (resizing || isDragging) { resizing = false; isDragging = false; saveState(); }
 });
 
 function getResizeCorner(s, mx, my) {
     if (s.isShrinkwrap) return null;
     const tol = 12;
     const dist = (x1, y1, x2, y2) => Math.hypot(x2-x1, y2-y1);
-    
     if (dist(mx, my, s.x - s.w/2, s.y - s.h/2) < tol) return "top-left";
     if (dist(mx, my, s.x + s.w/2, s.y - s.h/2) < tol) return "top-right";
     if (dist(mx, my, s.x - s.w/2, s.y + s.h/2) < tol) return "bottom-left";
@@ -712,28 +662,23 @@ function getResizeCorner(s, mx, my) {
 function resizeShape(s, mx, my, corner) {
     let minSize = 10;
     let oldX = s.x, oldY = s.y, oldW = s.w, oldH = s.h;
-
     switch (corner) {
         case "top-left":
             s.w = (oldX + oldW/2) - mx; s.h = (oldY + oldH/2) - my;
             if (s.w > minSize) s.x = mx + s.w/2; else s.w = minSize;
-            if (s.h > minSize) s.y = my + s.h/2; else s.h = minSize;
-            break;
+            if (s.h > minSize) s.y = my + s.h/2; else s.h = minSize; break;
         case "top-right":
             s.w = mx - (oldX - oldW/2); s.h = (oldY + oldH/2) - my;
             if (s.w > minSize) s.x = (oldX - oldW/2) + s.w/2; else s.w = minSize;
-            if (s.h > minSize) s.y = my + s.h/2; else s.h = minSize;
-            break;
+            if (s.h > minSize) s.y = my + s.h/2; else s.h = minSize; break;
         case "bottom-left":
             s.w = (oldX + oldW/2) - mx; s.h = my - (oldY - oldH/2);
             if (s.w > minSize) s.x = mx + s.w/2; else s.w = minSize;
-            if (s.h > minSize) s.y = (oldY - oldH/2) + s.h/2; else s.h = minSize;
-            break;
+            if (s.h > minSize) s.y = (oldY - oldH/2) + s.h/2; else s.h = minSize; break;
         case "bottom-right":
             s.w = mx - (oldX - oldW/2); s.h = my - (oldY - oldH/2);
             if (s.w > minSize) s.x = (oldX - oldW/2) + s.w/2; else s.w = minSize;
-            if (s.h > minSize) s.y = (oldY - oldH/2) + s.h/2; else s.h = minSize;
-            break;
+            if (s.h > minSize) s.y = (oldY - oldH/2) + s.h/2; else s.h = minSize; break;
     }
 }
 
@@ -759,16 +704,14 @@ function updateShrinkwrap() {
             envelopePoints.push({x: s.x - s.w/2 - shrinkwrapOffset, y: s.y + s.h/2 + shrinkwrapOffset});
             envelopePoints.push({x: s.x + s.w/2 + shrinkwrapOffset, y: s.y + s.h/2 + shrinkwrapOffset});
         }
-        if (s.type === 'poly') {
+        if (s.type === 'poly' || s.type === 'curve') {
             s.vertices.forEach(v => {
                 envelopePoints.push({x: v.x - shrinkwrapOffset, y: v.y - shrinkwrapOffset});
                 envelopePoints.push({x: v.x + shrinkwrapOffset, y: v.y + shrinkwrapOffset});
             });
         }
     });
-    
-    shrinkwrapShape.vertices = computeConvexHull(envelopePoints);
-    draw();
+    shrinkwrapShape.vertices = computeConvexHull(envelopePoints); draw();
 }
 
 function computeConvexHull(points) {
@@ -790,141 +733,80 @@ function computeConvexHull(points) {
 }
 
 function drawShapePrimitive(ctx, type, cx, cy, w, h) {
-    let dx = cx - w/2;
-    let dy = cy - h/2;
+    let dx = cx - w/2; let dy = cy - h/2;
     ctx.beginPath();
-    if (type === 'rect') {
-        ctx.rect(dx, dy, w, h);
-    } else if (type === 'ellipse') {
-        ctx.ellipse(cx, cy, w/2, h/2, 0, 0, Math.PI*2);
-    } else if (type === 'round_rect') {
-        ctx.roundRect(dx, dy, w, h, Math.min(w, h) * 0.15);
-    } else if (type === 'triangle') {
-        ctx.moveTo(cx, dy);
-        ctx.lineTo(dx + w, dy + h);
-        ctx.lineTo(dx, dy + h);
-    } else if (type === 'diamond') {
-        ctx.moveTo(cx, dy);
-        ctx.lineTo(dx + w, cy);
-        ctx.lineTo(cx, dy + h);
-        ctx.lineTo(dx, cy);
-    } else if (type === 'trapezoid') {
-        let inset = w * 0.25;
-        ctx.moveTo(dx + inset, dy);
-        ctx.lineTo(dx + w - inset, dy);
-        ctx.lineTo(dx + w, dy + h);
-        ctx.lineTo(dx, dy + h);
-    } else if (type === 'human') {
-        const r = Math.min(w,h) * 0.15;
-        ctx.arc(cx, dy + r, r, 0, Math.PI*2); // Head
-        ctx.moveTo(cx - w*0.25, dy + r*2.5); // left shoulder
-        ctx.quadraticCurveTo(cx, dy + r*1.8, cx + w*0.25, dy + r*2.5); // shoulders/neck
-        ctx.lineTo(cx + w*0.2, dy + h); // right outer
-        ctx.lineTo(cx + w*0.05, dy + h); // right inner
-        ctx.lineTo(cx, dy + h*0.6); // crotch
-        ctx.lineTo(cx - w*0.05, dy + h); // left inner
-        ctx.lineTo(cx - w*0.2, dy + h); // left outer
-        ctx.lineTo(cx - w*0.25, dy + r*2.5); // back to shoulder
+    if (type === 'rect') ctx.rect(dx, dy, w, h);
+    else if (type === 'ellipse') ctx.ellipse(cx, cy, w/2, h/2, 0, 0, Math.PI*2);
+    else if (type === 'round_rect') ctx.roundRect(dx, dy, w, h, Math.min(w, h) * 0.15);
+    else if (type === 'triangle') { ctx.moveTo(cx, dy); ctx.lineTo(dx + w, dy + h); ctx.lineTo(dx, dy + h); }
+    else if (type === 'diamond') { ctx.moveTo(cx, dy); ctx.lineTo(dx + w, cy); ctx.lineTo(cx, dy + h); ctx.lineTo(dx, cy); }
+    else if (type === 'trapezoid') { let inset = w * 0.25; ctx.moveTo(dx + inset, dy); ctx.lineTo(dx + w - inset, dy); ctx.lineTo(dx + w, dy + h); ctx.lineTo(dx, dy + h); }
+    else if (type === 'human') {
+        const r = Math.min(w,h) * 0.15; ctx.arc(cx, dy + r, r, 0, Math.PI*2); ctx.moveTo(cx - w*0.25, dy + r*2.5);
+        ctx.quadraticCurveTo(cx, dy + r*1.8, cx + w*0.25, dy + r*2.5); ctx.lineTo(cx + w*0.2, dy + h); ctx.lineTo(cx + w*0.05, dy + h);
+        ctx.lineTo(cx, dy + h*0.6); ctx.lineTo(cx - w*0.05, dy + h); ctx.lineTo(cx - w*0.2, dy + h); ctx.lineTo(cx - w*0.25, dy + r*2.5);
     }
-    ctx.closePath();
-    ctx.fill();
+    ctx.closePath(); ctx.fill();
 }
 
 function draw() {
-    ctx.fillStyle = `rgb(${bgColor}, ${bgColor}, ${bgColor})`;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
+    ctx.fillStyle = `rgb(${bgColor}, ${bgColor}, ${bgColor})`; ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (bgImage) {
-        ctx.globalAlpha = bgOpacity;
-        const scale = Math.min(canvas.width / bgImage.width, canvas.height / bgImage.height);
-        const imgW = bgImage.width * scale;
-        const imgH = bgImage.height * scale;
-        ctx.drawImage(bgImage, panOffsetX, panOffsetY, imgW, imgH);
-        ctx.globalAlpha = 1.0;
+        ctx.globalAlpha = bgOpacity; const scale = Math.min(canvas.width / bgImage.width, canvas.height / bgImage.height);
+        ctx.drawImage(bgImage, panOffsetX, panOffsetY, bgImage.width * scale, bgImage.height * scale); ctx.globalAlpha = 1.0;
     }
     
-    ctx.save();
-    ctx.translate(panOffsetX, panOffsetY);
-    
-    if (floorVisible) {
-        ctx.fillStyle = "#FFFF00"; 
-        ctx.globalAlpha = currentTool === "EXPORTING" ? 1.0 : 0.8;
-        ctx.fillRect(-panOffsetX, (canvas.height - panOffsetY) * 0.9, canvas.width, canvas.height * 0.1);
-        ctx.globalAlpha = 1.0;
-    }
-    
+    ctx.save(); ctx.translate(panOffsetX, panOffsetY);
+    if (floorVisible) { ctx.fillStyle = "#FFFF00"; ctx.globalAlpha = currentTool === "EXPORTING" ? 1.0 : 0.8; ctx.fillRect(-panOffsetX, (canvas.height - panOffsetY) * 0.9, canvas.width, canvas.height * 0.1); ctx.globalAlpha = 1.0; }
     if (shrinkwrapShape && shrinkwrapShape.vertices.length > 0) {
-        ctx.fillStyle = shrinkwrapShape.fillColor;
-        ctx.beginPath();
-        ctx.moveTo(shrinkwrapShape.vertices[0].x, shrinkwrapShape.vertices[0].y);
+        ctx.fillStyle = shrinkwrapShape.fillColor; ctx.beginPath(); ctx.moveTo(shrinkwrapShape.vertices[0].x, shrinkwrapShape.vertices[0].y);
         for (let i = 1; i < shrinkwrapShape.vertices.length; i++) ctx.lineTo(shrinkwrapShape.vertices[i].x, shrinkwrapShape.vertices[i].y);
-        ctx.closePath();
-        ctx.globalAlpha = currentTool === "EXPORTING" ? 1.0 : 0.4;
-        ctx.fill();
-        ctx.globalAlpha = 1.0;
-        
-        if (shrinkwrapShape === selectedShape && currentTool !== "EXPORTING") {
-            ctx.strokeStyle = "rgba(255,255,255,0.8)";
-            ctx.lineWidth = 2; ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([]);
-        }
+        ctx.closePath(); ctx.globalAlpha = currentTool === "EXPORTING" ? 1.0 : 0.4; ctx.fill(); ctx.globalAlpha = 1.0;
+        if (shrinkwrapShape === selectedShape && currentTool !== "EXPORTING") { ctx.strokeStyle = "rgba(255,255,255,0.8)"; ctx.lineWidth = 2; ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([]); }
     }
     
-    // Draw Shapes
     for (let s of shapes) {
-        ctx.fillStyle = s.fillColor;
-        ctx.globalAlpha = currentTool === "EXPORTING" ? 1.0 : 0.85;
-        
+        ctx.fillStyle = s.fillColor; ctx.globalAlpha = currentTool === "EXPORTING" ? 1.0 : 0.85;
         if (s.type === 'shape' || s.type === 'rect') {
-            let stype = s.subType || 'rect'; // gracefully handle prior JSONs
-            drawShapePrimitive(ctx, stype, s.x, s.y, s.w, s.h);
-        } else if (s.type === 'poly' && s.vertices.length > 0) {
+            drawShapePrimitive(ctx, s.subType || 'rect', s.x, s.y, s.w, s.h);
+        } else if ((s.type === 'poly' || s.type === 'curve') && s.vertices.length > 0) {
             ctx.beginPath();
-            ctx.moveTo(s.vertices[0].x, s.vertices[0].y);
-            for (let i=1; i<s.vertices.length; i++) ctx.lineTo(s.vertices[i].x, s.vertices[i].y);
-            ctx.closePath();
-            ctx.fill();
+            let pts = s.type === 'curve' ? chaikinClosed(s.vertices, 4) : s.vertices;
+            ctx.moveTo(pts[0].x, pts[0].y);
+            for (let i=1; i<pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+            ctx.closePath(); ctx.fill();
         }
         ctx.globalAlpha = 1.0;
         
-        // Handles
         if (s === selectedShape && currentTool !== "EXPORTING") {
             ctx.fillStyle = "white"; ctx.strokeStyle = "rgba(0,0,0,0.5)"; ctx.lineWidth = 1;
             const drawHndl = (hx, hy) => { ctx.beginPath(); ctx.arc(hx, hy, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); };
-            
             if (s.type === 'shape' || s.type === 'rect') {
-                drawHndl(s.x - s.w/2, s.y - s.h/2);
-                drawHndl(s.x + s.w/2, s.y - s.h/2);
-                drawHndl(s.x - s.w/2, s.y + s.h/2);
-                drawHndl(s.x + s.w/2, s.y + s.h/2);
-                ctx.strokeStyle = "rgba(255,255,255,0.8)"; ctx.setLineDash([4, 4]);
-                ctx.strokeRect(s.x - s.w/2, s.y - s.h/2, s.w, s.h); ctx.setLineDash([]);
-            } else if (s.type === 'poly') {
+                drawHndl(s.x - s.w/2, s.y - s.h/2); drawHndl(s.x + s.w/2, s.y - s.h/2); drawHndl(s.x - s.w/2, s.y + s.h/2); drawHndl(s.x + s.w/2, s.y + s.h/2);
+                ctx.strokeStyle = "rgba(255,255,255,0.8)"; ctx.setLineDash([4, 4]); ctx.strokeRect(s.x - s.w/2, s.y - s.h/2, s.w, s.h); ctx.setLineDash([]);
+            } else if (s.type === 'poly' || s.type === 'curve') {
                 s.vertices.forEach(v => drawHndl(v.x, v.y));
-                ctx.strokeStyle = "rgba(255,255,255,0.8)"; ctx.setLineDash([4, 4]);
-                ctx.beginPath();
+                ctx.strokeStyle = "rgba(255,255,255,0.8)"; ctx.setLineDash([4, 4]); ctx.beginPath();
                 ctx.moveTo(s.vertices[0].x, s.vertices[0].y);
                 for (let i=1; i<s.vertices.length; i++) ctx.lineTo(s.vertices[i].x, s.vertices[i].y);
-                ctx.closePath(); ctx.stroke(); ctx.setLineDash([]);
+                if (s.type === 'poly' || s.type === 'curve') ctx.closePath(); // always close handles path
+                ctx.stroke(); ctx.setLineDash([]);
             }
         }
     }
-    
     if (currentPolyVertices.length > 0 && currentTool !== "EXPORTING") {
-        ctx.strokeStyle = '#2d5aff';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(currentPolyVertices[0].x, currentPolyVertices[0].y);
-        for(let i=1; i<currentPolyVertices.length; i++) ctx.lineTo(currentPolyVertices[i].x, currentPolyVertices[i].y);
+        ctx.strokeStyle = '#2d5aff'; ctx.lineWidth = 2; ctx.beginPath();
+        let pts = currentTool === 'CURVE' ? chaikinOpen(currentPolyVertices, 4) : currentPolyVertices;
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for(let i=1; i<pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
         ctx.stroke();
     }
     ctx.restore();
 }
 
 function resizeCanvas() {
-    const parent = document.getElementById('canvas-wrapper');
-    canvas.width = parent.clientWidth;
-    canvas.height = parent.clientHeight;
+    canvas.width = document.getElementById('canvas-wrapper').clientWidth;
+    canvas.height = document.getElementById('canvas-wrapper').clientHeight;
     draw();
 }
-window.addEventListener('resize', resizeCanvas);
-resizeCanvas(); 
+window.addEventListener('resize', resizeCanvas); resizeCanvas(); 
