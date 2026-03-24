@@ -3,97 +3,92 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Semantic Segment Mapping</title>
+  <title>Architectural Segment Mapper</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="sidebar">
-    <div class="sidebar-header">
-      <h2>Segment Editor</h2>
-      <p>Semantic Map Generator</p>
-    </div>
-    
-    <div class="controls-section">
-      <h3>Tools</h3>
-      <div class="toolbar-grid">
-        <button id="toolSelect" class="btn-action active">Select (V)</button>
-        <button id="toolRect" class="btn-action">Rectangle (M)</button>
-        <button id="toolPoly" class="btn-action">Polygon (P)</button>
-        <button id="toolPan" class="btn-action">Pan (H)</button>
-      </div>
-    </div>
-    
-    <div class="controls-section">
-        <label>Current Selected Class</label>
-        <select id="semanticColor">
-          <option value="#FF0000">Wall / Partition (Red)</option>
-          <option value="#00FF00">Window / Glazing (Green)</option>
-          <option value="#0000FF">Door / Opening (Blue)</option>
-          <option value="#FFFF00">Slab / Floor (Yellow)</option>
-          <option value="#FF00FF">Roof / Canopy (Magenta)</option>
-          <option value="#00FFFF">Stairs / Steps (Cyan)</option>
-          <option value="#FFA500">Facade Pattern (Orange)</option>
-          <option value="#800080">Furniture / Fixture (Purple)</option>
-          <option value="#FFFFFF">Ignore (White)</option>
-        </select>
-        <p class="helper-text">Changes color of selected shape or defines color for new shapes.</p>
+  <div id="app">
+    <div id="workspace">
+      <!-- Left Toolbar (Illustrator style) -->
+      <div id="left-toolbar">
+        <button id="toolSelect" title="Select (V)" class="tool-btn active"><i class="ph ph-cursor"></i></button>
+        <button id="toolRect" title="Rectangle (M)" class="tool-btn"><i class="ph ph-square"></i></button>
+        <button id="toolPoly" title="Polygon (P)" class="tool-btn"><i class="ph ph-polygon"></i></button>
+        <button id="toolPan" title="Pan (H)" class="tool-btn"><i class="ph ph-hand-palm"></i></button>
+        <div class="divider"></div>
+        <button id="btnFloor" title="Add Floor Plane" class="tool-btn"><i class="ph ph-align-bottom"></i></button>
+        <button id="btnShrinkwrap" title="Compute Shrinkwrap" class="tool-btn"><i class="ph ph-bounding-box"></i></button>
       </div>
 
-      <div class="control-group">
-        <label>Layer Settings</label>
-        <button id="btnFloor" class="btn-toggle">Add Floor Plane</button>
-      </div>
+      <!-- Main Canvas Area -->
+      <div id="main-view">
+        <div id="canvas-wrapper">
+          <canvas id="mainCanvas" width="1920" height="1080"></canvas>
+        </div>
 
-      <div class="control-group">
-        <label>Shrinkwrap Offset: <span id="shrinkOffsetVal">10</span>px</label>
-        <input type="range" id="shrinkOffset" min="0" max="50" value="10">
-        <button id="btnShrinkwrap" class="btn-toggle" style="margin-top: 15px;">Compute Shrinkwrap</button>
+        <!-- Floating Properties Panel -->
+        <div id="floating-panel" class="floating-window">
+          <div class="window-header">Properties</div>
+          <div class="window-content">
+            <label>Semantic Class</label>
+            <select id="semanticColor">
+              <option value="#FF0000">Wall / Partition (Red)</option>
+              <option value="#00FF00">Window / Glazing (Green)</option>
+              <option value="#0000FF">Door / Opening (Blue)</option>
+              <option value="#FFFF00">Slab / Floor (Yellow)</option>
+              <option value="#FF00FF">Roof / Canopy (Magenta)</option>
+              <option value="#00FFFF">Stairs / Steps (Cyan)</option>
+              <option value="#FFA500">Facade Pattern (Orange)</option>
+              <option value="#800080">Furniture / Fixture (Purple)</option>
+              <option value="#FFFFFF">Ignore (White)</option>
+            </select>
+            
+            <div id="propertiesPanel" style="display:none; margin-top:15px;">
+              <label>Transform</label>
+              <div class="props-grid">
+                 <div><label>X</label><input type="number" id="propX"></div>
+                 <div><label>Y</label><input type="number" id="propY"></div>
+                 <div><label>W</label><input type="number" id="propW"></div>
+                 <div><label>H</label><input type="number" id="propH"></div>
+              </div>
+              <p class="helper-text" style="font-size:10px; margin-top:7px; color:#888;">Order: [ Send Back &nbsp;&nbsp;|&nbsp;&nbsp; ] Bring Front</p>
+            </div>
+            
+            <div style="margin-top:20px;">
+                <label style="display:flex;justify-content:space-between;"><span>Shrinkwrap Offset</span> <span id="shrinkOffsetVal" style="color:#fff">10</span></label>
+                <input type="range" id="shrinkOffset" min="0" max="50" value="10">
+            </div>
+          </div>
+        </div>
       </div>
     </div>
-    
-    <div id="propertiesPanel" class="controls-section" style="display:none;">
-      <h3>Properties</h3>
-      <div class="props-grid">
-         <div><label>X:</label><input type="number" id="propX"></div>
-         <div><label>Y:</label><input type="number" id="propY"></div>
-         <div><label>W:</label><input type="number" id="propW"></div>
-         <div><label>H:</label><input type="number" id="propH"></div>
-      </div>
-      <p class="helper-text">Layer: [ bring forward, ] send back</p>
-    </div>
 
-    <div class="controls-section">
-      <h3>Reference Underlay</h3>
-      <div class="file-upload-wrapper">
-        <button id="btnUploadImage" class="btn-secondary" onclick="document.getElementById('bgImageUpload').click()">Upload Reference Image</button>
-        <button id="btnRemoveImage" class="btn-secondary" style="display:none; margin-top:5px; color:#ff6b6b; border-color: rgba(255,107,107,0.3);">Remove Image</button>
+    <!-- Bottom Status Bar -->
+    <div id="bottom-bar">
+      <div class="status-group">
+        <label>Underlay Image:</label>
+        <button id="btnUploadImage" class="mini-btn" onclick="document.getElementById('bgImageUpload').click()"><i class="ph ph-upload-simple"></i> Upload</button>
         <input type="file" id="bgImageUpload" accept="image/png, image/jpeg" style="display:none">
+        <button id="btnRemoveImage" class="mini-btn danger" style="display:none;" title="Remove Image"><i class="ph ph-trash"></i></button>
+        <div class="divider-v"></div>
+        <label>Opacity:</label>
+        <input type="range" id="bgImageOpacity" min="0" max="1" step="0.01" value="0.5" style="width: 80px;">
+        <span id="bgImageOpacityVal">50%</span>
       </div>
-      <div class="control-group">
-        <label>Reference Opacity <span id="bgImageOpacityVal">50%</span></label>
-        <input type="range" id="bgImageOpacity" min="0" max="1" step="0.01" value="0.5">
+      
+      <div class="status-group" style="margin-left:20px;">
+        <label>Canvas BG Intensity:</label>
+        <input type="range" id="bgColor" min="0" max="255" value="255" style="width: 80px;">
       </div>
-      <div class="control-group">
-        <label>Background Intensity (Grayscale)</label>
-        <input type="range" id="bgColor" min="0" max="255" value="255">
-      </div>
-    </div>
-
-    <div class="controls-section export-section">
-      <h3>Export System</h3>
-      <div class="action-grid">
-        <button id="btnExportPNG" class="btn-primary">Export PNG Mask</button>
-        <button id="btnSaveJSON" class="btn-secondary">Save JSON State</button>
-        <button id="btnLoadJSON" class="btn-secondary" onclick="document.getElementById('jsonUpload').click()">Load JSON State</button>
+      
+      <div class="status-group right" style="margin-left: auto;">
+        <button id="btnLoadJSON" class="mini-btn" onclick="document.getElementById('jsonUpload').click()"><i class="ph ph-folder-open"></i> Load State</button>
         <input type="file" id="jsonUpload" accept=".json" style="display:none">
+        <button id="btnSaveJSON" class="mini-btn"><i class="ph ph-floppy-disk"></i> Save State</button>
+        <button id="btnExportPNG" class="mini-btn primary"><i class="ph ph-export"></i> Export PNG Mask</button>
       </div>
-    </div>
-  </div>
-  
-  <div id="main-view">
-    <div id="canvas-wrapper">
-      <canvas id="mainCanvas" width="720" height="1000"></canvas>
     </div>
   </div>
 

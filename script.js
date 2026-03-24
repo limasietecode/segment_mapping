@@ -66,7 +66,7 @@ window.addEventListener('keydown', (e) => {
         if (selectedShape.isShrinkwrap) {
             shrinkwrapShape = null;
             shrinkwrapActive = false;
-            document.getElementById('btnShrinkwrap').textContent = "Compute Shrinkwrap";
+            document.getElementById('btnShrinkwrap').title = "Compute Shrinkwrap";
             document.getElementById('btnShrinkwrap').classList.remove('active');
         } else {
             const idx = shapes.indexOf(selectedShape);
@@ -195,8 +195,9 @@ document.getElementById('shrinkOffset').addEventListener('input', (e) => {
 const btnFloor = document.getElementById('btnFloor');
 btnFloor.addEventListener('click', () => {
     floorVisible = !floorVisible;
-    btnFloor.textContent = floorVisible ? "Remove Floor Plane" : "Add Floor Plane";
-    btnFloor.classList.toggle('active');
+    if(floorVisible) btnFloor.classList.add('active');
+    else btnFloor.classList.remove('active');
+    btnFloor.title = floorVisible ? "Remove Floor Plane" : "Add Floor Plane";
     draw();
 });
 const btnShrinkwrap = document.getElementById('btnShrinkwrap');
@@ -208,12 +209,12 @@ btnShrinkwrap.addEventListener('click', () => {
         }
         shrinkwrapShape = { isShrinkwrap: true, fillColor: currentClassColor, vertices: [] };
         updateShrinkwrap();
-        btnShrinkwrap.textContent = "Remove Shrinkwrap";
+        btnShrinkwrap.title = "Remove Shrinkwrap";
         btnShrinkwrap.classList.add('active');
         saveState();
     } else {
         shrinkwrapShape = null;
-        btnShrinkwrap.textContent = "Compute Shrinkwrap";
+        btnShrinkwrap.title = "Compute Shrinkwrap";
         btnShrinkwrap.classList.remove('active');
         saveState();
         draw();
@@ -281,10 +282,10 @@ document.getElementById('jsonUpload').addEventListener('change', (e) => {
             panOffsetY = data.panOffsetY || 0;
             document.getElementById('bgColor').value = bgColor;
             if (floorVisible) {
-                btnFloor.textContent = "Remove Floor Plane";
+                btnFloor.title = "Remove Floor Plane";
                 btnFloor.classList.add('active');
             } else {
-                btnFloor.textContent = "Add Floor Plane";
+                btnFloor.title = "Add Floor Plane";
                 btnFloor.classList.remove('active');
             }
             selectedShape = null;
