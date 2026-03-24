@@ -219,6 +219,53 @@ button:active {
   margin-bottom: 0;
 }
 
+.toolbar-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 15px;
+}
+.toolbar-grid button {
+  margin: 0;
+  padding: 8px 5px;
+  font-size: 11px;
+}
+.toolbar-grid button.active {
+  background: linear-gradient(135deg, #4f7fff, #2d5aff);
+  color: #fff;
+  border-color: #5e8bff;
+}
+
+.props-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.props-grid div {
+  display: flex;
+  align-items: center;
+}
+.props-grid label {
+  margin-bottom: 0;
+  margin-right: 5px;
+  width: 15px;
+  color: #c0c2cc;
+}
+.props-grid input {
+  width: 100%;
+  background: #1c1f26;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #fff;
+  padding: 5px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+.props-grid input:focus {
+  border-color: #5d8aff;
+}
+
 /* Main View */
 #main-view {
   flex-grow: 1;

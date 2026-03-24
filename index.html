@@ -15,21 +15,26 @@
     </div>
     
     <div class="controls-section">
-      <div class="control-group">
-        <label>Shape Count: <span id="shapeCountVal">3</span></label>
-        <input type="range" id="shapeCount" min="0" max="20" value="3">
+      <h3>Tools</h3>
+      <div class="toolbar-grid">
+        <button id="toolSelect" class="btn-action active">Select (V)</button>
+        <button id="toolRect" class="btn-action">Rectangle (M)</button>
+        <button id="toolPoly" class="btn-action">Polygon (P)</button>
+        <button id="toolPan" class="btn-action">Pan (H)</button>
       </div>
-
-      <div class="control-group">
+    </div>
+    
+    <div class="controls-section">
         <label>Current Selected Class</label>
         <select id="semanticColor">
-          <option value="#FF0000">Automobile / Car (Red)</option>
-          <option value="#00FF00">Vegetation / Tree (Green)</option>
-          <option value="#0000FF">Sky / Water (Blue)</option>
-          <option value="#FFFF00">Structure / Building (Yellow)</option>
-          <option value="#FF00FF">Road / Ground (Magenta)</option>
-          <option value="#00FFFF">Human / Person (Cyan)</option>
-          <option value="#808080">Other (Gray)</option>
+          <option value="#FF0000">Wall / Partition (Red)</option>
+          <option value="#00FF00">Window / Glazing (Green)</option>
+          <option value="#0000FF">Door / Opening (Blue)</option>
+          <option value="#FFFF00">Slab / Floor (Yellow)</option>
+          <option value="#FF00FF">Roof / Canopy (Magenta)</option>
+          <option value="#00FFFF">Stairs / Steps (Cyan)</option>
+          <option value="#FFA500">Facade Pattern (Orange)</option>
+          <option value="#800080">Furniture / Fixture (Purple)</option>
           <option value="#FFFFFF">Ignore (White)</option>
         </select>
         <p class="helper-text">Changes color of selected shape or defines color for new shapes.</p>
@@ -47,6 +52,17 @@
       </div>
     </div>
     
+    <div id="propertiesPanel" class="controls-section" style="display:none;">
+      <h3>Properties</h3>
+      <div class="props-grid">
+         <div><label>X:</label><input type="number" id="propX"></div>
+         <div><label>Y:</label><input type="number" id="propY"></div>
+         <div><label>W:</label><input type="number" id="propW"></div>
+         <div><label>H:</label><input type="number" id="propH"></div>
+      </div>
+      <p class="helper-text">Layer: [ bring forward, ] send back</p>
+    </div>
+
     <div class="controls-section">
       <h3>Reference Underlay</h3>
       <div class="file-upload-wrapper">
