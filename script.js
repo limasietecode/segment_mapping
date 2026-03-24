@@ -14,14 +14,121 @@ let bgImage = null;
 let bgOpacity = 0.5;
 let bgColor = 255;
 let currentClassColor = "#FF0000";
+let selectedShapes = [];
+let isMarquee = false;
+let marqueeStart = {x:0, y:0};
+let marqueeCurrent = {x:0, y:0};
 
-let selectedShape = null;
 let resizing = false;
 let resizeCorner = "";
 let isDragging = false;
 let dragOffsetX = 0;
 let dragOffsetY = 0;
+let dragStartPoint = {x:0, y:0};
 let shrinkwrapActive = false;
+let selectedNodeIndex = -1;
+
+let currentUnit = "px";
+let pixelsPerUnit = 1;
+let calibrateStart = null;
+
+let blockLibrary = {};
+let isEditingBlock = false;
+let editingBlockId = null;
+let preEditShapes = [];
+let preEditBg = 255;
+
+function hitTest(s, mx, my) {
+    if (s.isShrinkwrap) return ptInConvexPolygon(mx, my, s.vertices);
+    if (s.type === 'group') {
+        for(let i=0; i<s.children.length; i++) if(hitTest(s.children[i], mx, my)) return true;
+        return false;
+    }
+    if (s.type === 'blockRef') {
+        let master = blockLibrary[s.blockId];
+        if (!master) return false;
+        let localMx = mx - s.x; let localMy = my - s.y;
+        for(let i=0; i<master.children.length; i++) if(hitTest(master.children[i], localMx, localMy)) return true;
+        return false;
+    }
+    if (s.type === 'shape' || s.type === 'rect') return (mx >= s.x - s.w/2 && mx <= s.x + s.w/2 && my >= s.y - s.h/2 && my <= s.y + s.h/2);
+    else if (s.type === 'poly' || s.type === 'curve') {
+        let collision = false;
+        let regions = []; let currentReg = [];
+        s.vertices.forEach(v => {
+            if (v.moveTo && currentReg.length > 0) { regions.push(currentReg); currentReg = []; }
+            currentReg.push(v);
+        });
+        if (currentReg.length > 0) regions.push(currentReg);
+        regions.forEach(reg => {
+            for (let i = 0, j = reg.length - 1; i < reg.length; j = i++) {
+                let xi = reg[i].x, yi = reg[i].y; let xj = reg[j].x, yj = reg[j].y;
+                let intersect = ((yi > my) !== (yj > my)) && (mx < (xj - xi) * (my - yi) / (yj - yi) + xi);
+                if (intersect) collision = !collision;
+            }
+        });
+        return collision;
+    }
+    return false;
+}
+
+function ptInConvexPolygon(px, py, vertices) {
+    let collision = false;
+    for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+        let xi = vertices[i].x, yi = vertices[i].y;
+        let xj = vertices[j].x, yj = vertices[j].y;
+        let intersect = ((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi);
+        if (intersect) collision = !collision;
+    }
+    return collision;
+}
+
+function getShapeBounds(s) {
+    if (s.type === 'group') {
+        let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
+        s.children.forEach(c => {
+            let b = getShapeBounds(c);
+            if (b.minX < minX) minX = b.minX; if (b.maxX > maxX) maxX = b.maxX;
+            if (b.minY < minY) minY = b.minY; if (b.maxY > maxY) maxY = b.maxY;
+        });
+        return {minX, maxX, minY, maxY};
+    }
+    if (s.type === 'blockRef') {
+        let master = blockLibrary[s.blockId];
+        if (!master || master.children.length===0) return {minX: s.x, maxX: s.x, minY: s.y, maxY: s.y};
+        let b = getShapeBounds({type: 'group', children: master.children});
+        return {minX: b.minX + s.x, maxX: b.maxX + s.x, minY: b.minY + s.y, maxY: b.maxY + s.y};
+    }
+    if (s.type === 'shape' || s.type === 'rect') return {minX: s.x - s.w/2, maxX: s.x + s.w/2, minY: s.y - s.h/2, maxY: s.y + s.h/2};
+    let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
+    s.vertices.forEach(v => {
+        if(v.x<minX)minX=v.x; if(v.x>maxX)maxX=v.x; if(v.y<minY)minY=v.y; if(v.y>maxY)maxY=v.y;
+    });
+    return {minX, maxX, minY, maxY};
+}
+
+function translateShape(s, dx, dy) {
+    if (s.isShrinkwrap) return;
+    if (s.type === 'group') s.children.forEach(c => translateShape(c, dx, dy));
+    else if (s.type === 'blockRef') { s.x += dx; s.y += dy; }
+    else if (s.type === 'shape' || s.type === 'rect') { s.x += dx; s.y += dy; }
+    else if (s.type === 'poly' || s.type === 'curve') s.vertices.forEach(v => { v.x += dx; v.y += dy; });
+}
+
+function deepConvertToPoly(s) {
+    if (s.type === 'group') {
+        s.children.forEach((c, idx) => { s.children[idx] = deepConvertToPoly(c); });
+    } else if (s.type === 'blockRef') {
+        let master = blockLibrary[s.blockId];
+        if (!master) return s;
+        let exploded = {type: 'group', children: JSON.parse(JSON.stringify(master.children)) };
+        exploded.children.forEach(c => translateShape(c, s.x, s.y));
+        return deepConvertToPoly(exploded);
+    } else if (s.type === 'shape' || s.type === 'rect') {
+        s = convertShapeToPoly(s); 
+    }
+    return s;
+}
 
 // Pan state
 let panOffsetX = 0;
@@ -96,7 +203,7 @@ function chaikinOpen(vertices, iterations) {
 
 function saveState() {
     historyStack = historyStack.slice(0, historyIndex + 1);
-    const clone = JSON.parse(JSON.stringify({shapes: shapes, shrinkwrapShape: shrinkwrapShape}));
+    const clone = JSON.parse(JSON.stringify({shapes: shapes, shrinkwrapShape: shrinkwrapShape, blockLibrary: blockLibrary}));
     historyStack.push(clone);
     historyIndex++;
 }
@@ -104,34 +211,42 @@ saveState();
 
 // Undo/Redo & Shortcuts
 window.addEventListener('keydown', (e) => {
-    if (selectedShape && e.key === '[') {
-        const idx = shapes.indexOf(selectedShape);
-        if (idx > 0) {
-            shapes.splice(idx, 1);
-            shapes.splice(idx - 1, 0, selectedShape);
-            saveState(); draw();
-        }
+    if (selectedShapes.length > 0 && e.key === '[') {
+        selectedShapes.forEach(s => {
+            const idx = shapes.indexOf(s);
+            if (idx > 0) { shapes.splice(idx, 1); shapes.splice(idx - 1, 0, s); }
+        });
+        saveState(); draw();
     }
-    if (selectedShape && e.key === ']') {
-        const idx = shapes.indexOf(selectedShape);
-        if (idx > -1 && idx < shapes.length - 1) {
-            shapes.splice(idx, 1);
-            shapes.splice(idx + 1, 0, selectedShape);
-            saveState(); draw();
+    if (selectedShapes.length > 0 && e.key === ']') {
+        for(let i=selectedShapes.length-1; i>=0; i--) {
+            const idx = shapes.indexOf(selectedShapes[i]);
+            if (idx > -1 && idx < shapes.length - 1) { shapes.splice(idx, 1); shapes.splice(idx + 1, 0, selectedShapes[i]); }
         }
+        saveState(); draw();
     }
-    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedShape) {
-        if (selectedShape.isShrinkwrap) {
-            shrinkwrapShape = null;
-            shrinkwrapActive = false;
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedShapes.length > 0) {
+        if (selectedNodeIndex > -1 && selectedShapes.length === 1 && (selectedShapes[0].type === 'poly' || selectedShapes[0].type === 'curve')) {
+            let s = selectedShapes[0];
+            let ptsCount = 0; s.vertices.forEach(v => { if(!v.moveTo) ptsCount++; });
+            if (ptsCount > 3) {
+                s.vertices.splice(selectedNodeIndex, 1); selectedNodeIndex = -1;
+                saveState(); draw(); return;
+            } else { alert("Cannot reduce polygon below 3 vertices."); return; }
+        }
+        
+        if (selectedShapes.length === 1 && selectedShapes[0].isShrinkwrap) {
+            shrinkwrapShape = null; shrinkwrapActive = false;
             document.getElementById('btnShrinkwrap').title = "Compute Shrinkwrap";
             document.getElementById('btnShrinkwrap').classList.remove('active');
         } else {
-            const idx = shapes.indexOf(selectedShape);
-            if (idx > -1) shapes.splice(idx, 1);
+            selectedShapes.forEach(s => {
+                const idx = shapes.indexOf(s);
+                if (idx > -1) shapes.splice(idx, 1);
+            });
             if (shrinkwrapActive) updateShrinkwrap();
         }
-        selectedShape = null; updatePropertiesPanel(); saveState(); draw();
+        selectedShapes = []; updatePropertiesPanel(); saveState(); draw();
     }
     if (e.ctrlKey && e.key.toLowerCase() === 'z') {
         if (historyIndex > 0) {
@@ -139,8 +254,16 @@ window.addEventListener('keydown', (e) => {
             const state = historyStack[historyIndex];
             shapes = JSON.parse(JSON.stringify(state.shapes));
             shrinkwrapShape = state.shrinkwrapShape ? JSON.parse(JSON.stringify(state.shrinkwrapShape)) : null;
-            selectedShape = null; updatePropertiesPanel(); draw();
+            if (state.blockLibrary) blockLibrary = JSON.parse(JSON.stringify(state.blockLibrary));
+            selectedShapes = []; updatePropertiesPanel(); draw();
         }
+    }
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'g') {
+        e.preventDefault();
+        document.getElementById('btnUngroup').click();
+    } else if (e.ctrlKey && e.key.toLowerCase() === 'g') {
+        e.preventDefault();
+        document.getElementById('btnGroup').click();
     }
     if (e.ctrlKey && e.key.toLowerCase() === 'y') {
         if (historyIndex < historyStack.length - 1) {
@@ -148,7 +271,8 @@ window.addEventListener('keydown', (e) => {
             const state = historyStack[historyIndex];
             shapes = JSON.parse(JSON.stringify(state.shapes));
             shrinkwrapShape = state.shrinkwrapShape ? JSON.parse(JSON.stringify(state.shrinkwrapShape)) : null;
-            selectedShape = null; updatePropertiesPanel(); draw();
+            if (state.blockLibrary) blockLibrary = JSON.parse(JSON.stringify(state.blockLibrary));
+            selectedShapes = []; updatePropertiesPanel(); draw();
         }
     }
     
@@ -168,6 +292,7 @@ document.getElementById('toolPoly').addEventListener('click', () => setTool('POL
 document.getElementById('toolCurve').addEventListener('click', () => setTool('CURVE'));
 document.getElementById('toolTransform').addEventListener('click', () => setTool('TRANSFORM'));
 document.getElementById('toolPan').addEventListener('click', () => setTool('PAN'));
+document.getElementById('toolCalibrate').addEventListener('click', () => setTool('CALIBRATE'));
 
 document.querySelectorAll('.flyout-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -199,8 +324,181 @@ document.querySelectorAll('.flyout-btn-tx').forEach(btn => {
     });
 });
 
+document.getElementById('btnGroup').addEventListener('click', () => {
+    if (selectedShapes.length > 1) {
+        let g = { type: 'group', id: 'grp_'+Date.now(), children: [] };
+        selectedShapes.forEach(s => {
+            let idx = shapes.indexOf(s);
+            if (idx > -1) { shapes.splice(idx, 1); g.children.push(s); }
+        });
+        shapes.push(g); selectedShapes = [g];
+        updatePropertiesPanel(); saveState(); draw();
+    }
+});
+document.getElementById('btnUngroup').addEventListener('click', () => {
+    let newShapes = [];
+    selectedShapes.forEach(s => {
+        if (s.type === 'group') {
+            const idx = shapes.indexOf(s);
+            if (idx > -1) shapes.splice(idx, 1);
+            s.children.forEach(c => { shapes.push(c); newShapes.push(c); });
+        } else {
+            newShapes.push(s);
+        }
+    });
+    selectedShapes = newShapes; updatePropertiesPanel(); saveState(); draw();
+});
+
+document.getElementById('btnMakeBlock').addEventListener('click', () => {
+    if (selectedShapes.length > 0) {
+        let id = 'blk_' + Date.now();
+        let b = getShapeBounds({type: 'group', children: selectedShapes});
+        let cx = (b.minX + b.maxX)/2; let cy = (b.minY + b.maxY)/2;
+        let masterChildren = JSON.parse(JSON.stringify(selectedShapes));
+        masterChildren.forEach(c => translateShape(c, -cx, -cy));
+        blockLibrary[id] = { id: id, children: masterChildren };
+        let instance = { type: 'blockRef', blockId: id, x: cx, y: cy };
+        selectedShapes.forEach(s => { let idx = shapes.indexOf(s); if (idx > -1) shapes.splice(idx, 1); });
+        shapes.push(instance); selectedShapes = [instance];
+        updatePropertiesPanel(); saveState(); draw();
+    }
+});
+document.getElementById('btnEditBlock').addEventListener('click', () => {
+    if (selectedShapes.length === 1 && selectedShapes[0].type === 'blockRef') {
+        let id = selectedShapes[0].blockId;
+        isEditingBlock = true; editingBlockId = id;
+        preEditShapes = shapes; preEditBg = bgColor;
+        shapes = JSON.parse(JSON.stringify(blockLibrary[id].children));
+        bgColor = 230; selectedShapes = [];
+        document.getElementById('btnMakeBlock').style.display = 'none';
+        document.getElementById('btnEditBlock').style.display = 'none';
+        document.getElementById('btnExitBlockEdit').style.display = 'inline-block';
+        updatePropertiesPanel(); draw();
+    }
+});
+document.getElementById('btnExitBlockEdit').addEventListener('click', () => {
+    if (isEditingBlock) {
+        blockLibrary[editingBlockId].children = JSON.parse(JSON.stringify(shapes));
+        shapes = preEditShapes; bgColor = preEditBg;
+        isEditingBlock = false; editingBlockId = null; selectedShapes = [];
+        document.getElementById('btnExitBlockEdit').style.display = 'none';
+        document.getElementById('btnMakeBlock').style.display = 'inline-block';
+        updatePropertiesPanel(); saveState(); draw();
+    }
+});
+
+// PolyBool JS Boolean Engine
+function polyToPolyBool(shape) {
+    if (shape.type === 'shape' || shape.type === 'rect') shape = convertShapeToPoly(shape);
+    if (shape.type === 'blockRef') shape = deepConvertToPoly(shape);
+    let regions = []; let currentReg = [];
+    shape.vertices.forEach(v => {
+        if (v.moveTo && currentReg.length > 0) { regions.push(currentReg); currentReg = []; }
+        currentReg.push([v.x, v.y]);
+    });
+    if (currentReg.length > 0) regions.push(currentReg);
+    return { regions: regions, inverted: false };
+}
+
+function applyBoolean(operation) {
+    if (selectedShapes.length < 2) return;
+    let flats = [];
+    selectedShapes.forEach(s => {
+        let p = deepConvertToPoly(JSON.parse(JSON.stringify(s)));
+        if (p.type === 'group') {
+            const extract = (g) => { g.children.forEach(c => { if(c.type==='group') extract(c); else if(c.vertices) flats.push(c); }); };
+            extract(p);
+        } else if (p.vertices) flats.push(p);
+    });
+    if (flats.length < 2) return;
+    
+    let pbResult = polyToPolyBool(flats[0]);
+    let targetColor = flats[0].fillColor;
+    for(let i=1; i<flats.length; i++) {
+        let pbNext = polyToPolyBool(flats[i]);
+        if (operation === 'unite') pbResult = PolyBool.union(pbResult, pbNext);
+        else if (operation === 'subtract') pbResult = PolyBool.difference(pbResult, pbNext);
+        else if (operation === 'intersect') pbResult = PolyBool.intersect(pbResult, pbNext);
+    }
+    
+    let verts = [];
+    pbResult.regions.forEach((region, i) => {
+        region.forEach((pt, j) => {
+            verts.push({ x: pt[0], y: pt[1], moveTo: j === 0 });
+        });
+    });
+    
+    if (verts.length === 0) return; // Full destruction
+    let newShape = { type: 'poly', vertices: verts, fillColor: targetColor };
+    
+    selectedShapes.forEach(s => {
+        let idx = shapes.indexOf(s);
+        if (idx > -1) shapes.splice(idx, 1);
+    });
+    shapes.push(newShape);
+    selectedShapes = [newShape];
+    updatePropertiesPanel(); saveState(); draw();
+}
+
+document.getElementById('btnBoolUnite').addEventListener('click', () => applyBoolean('unite'));
+document.getElementById('btnBoolSubtract').addEventListener('click', () => applyBoolean('subtract'));
+document.getElementById('btnBoolIntersect').addEventListener('click', () => applyBoolean('intersect'));
+
+document.getElementById('btnWallOffset').addEventListener('click', () => {
+    if (selectedShapes.length === 0) return;
+    let dist = Math.abs(parseFloat(document.getElementById('propWallThickness').value) || 10);
+    
+    let newShapes = [];
+    selectedShapes.forEach(s => {
+        let p = deepConvertToPoly(JSON.parse(JSON.stringify(s)));
+        if (!p.vertices || p.vertices.length < 3) { newShapes.push(s); return; }
+        
+        let shapeRegions = []; let currentReg = [];
+        p.vertices.forEach(v => {
+            if (v.moveTo && currentReg.length > 0) { shapeRegions.push(currentReg); currentReg = []; }
+            currentReg.push(v);
+        });
+        if (currentReg.length > 0) shapeRegions.push(currentReg);
+
+        shapeRegions.forEach(reg => {
+            if (reg.length < 3) return;
+            let flats = []; const segments = 12;
+            reg.forEach(v => {
+                let circle = [];
+                for(let i=0; i<segments; i++) circle.push([v.x + dist*Math.cos(i/segments*Math.PI*2), v.y + dist*Math.sin(i/segments*Math.PI*2)]);
+                flats.push({regions: [circle], inverted: false});
+            });
+            for(let i=0; i<reg.length; i++) {
+                let v1 = reg[i]; let v2 = reg[(i+1)%reg.length];
+                let a = Math.atan2(v2.y-v1.y, v2.x-v1.x); let nx = Math.sin(a)*dist; let ny = -Math.cos(a)*dist;
+                flats.push({regions: [[[v1.x+nx, v1.y+ny], [v2.x+nx, v2.y+ny], [v2.x-nx, v2.y-ny], [v1.x-nx, v1.y-ny]]], inverted: false});
+            }
+            
+            let pbResult = flats[0];
+            for(let i=1; i<flats.length; i++) pbResult = PolyBool.union(pbResult, flats[i]);
+            
+            let origReg = reg.map(pt => [pt.x, pt.y]);
+            pbResult = PolyBool.difference(pbResult, {regions: [origReg], inverted: false});
+            
+            let verts = [];
+            pbResult.regions.forEach((region, i) => {
+                region.forEach((pt, j) => verts.push({ x: pt[0], y: pt[1], moveTo: j === 0 }));
+            });
+            if(verts.length > 0) newShapes.push({ type: 'poly', vertices: verts, fillColor: currentClassColor });
+        });
+        
+        let idx = shapes.indexOf(s);
+        if(idx>-1) shapes.splice(idx, 1);
+    });
+    
+    newShapes.forEach(ns => shapes.push(ns));
+    selectedShapes = newShapes;
+    updatePropertiesPanel(); saveState(); draw();
+});
+
 document.getElementById('btnApplyRectArray').addEventListener('click', () => {
-    if (!selectedShape) return alert("Select a shape first.");
+    if (selectedShapes.length !== 1) return alert("Select exactly one shape to array.");
+    let selectedShape = selectedShapes[0];
     const rows = parseInt(document.getElementById('arrRows').value);
     const cols = parseInt(document.getElementById('arrCols').value);
     const gapX = parseFloat(document.getElementById('arrGapX').value);
@@ -220,11 +518,12 @@ document.getElementById('btnApplyRectArray').addEventListener('click', () => {
             shapes.push(clone);
         }
     }
-    selectedShape = null; setTool('SELECT'); saveState(); draw();
+    selectedShapes = []; setTool('SELECT'); saveState(); draw();
 });
 
 document.getElementById('btnApplyPolarArray').addEventListener('click', () => {
-    if (!selectedShape) return alert("Select a shape first.");
+    if (selectedShapes.length !== 1) return alert("Select exactly one shape to array.");
+    let selectedShape = selectedShapes[0];
     const count = parseInt(document.getElementById('arrCount').value);
     const totalAngle = parseFloat(document.getElementById('arrAngle').value) * Math.PI / 180;
     const basePoly = convertShapeToPoly(selectedShape);
@@ -245,7 +544,7 @@ document.getElementById('btnApplyPolarArray').addEventListener('click', () => {
         });
         shapes.push(clone);
     }
-    selectedShape = null; setTool('SELECT'); saveState(); draw();
+    selectedShapes = []; setTool('SELECT'); saveState(); draw();
 });
 
 function setTool(tool) {
@@ -266,13 +565,14 @@ function setTool(tool) {
     if (tool === 'CURVE') document.getElementById('toolCurve').classList.add('active');
     if (tool === 'TRANSFORM') document.getElementById('toolTransform').classList.add('active');
     if (tool === 'PAN') document.getElementById('toolPan').classList.add('active');
+    if (tool === 'CALIBRATE') document.getElementById('toolCalibrate').classList.add('active');
     
     if (tool !== 'TRANSFORM') document.getElementById('array-panel').style.display = 'none';
     
-    canvas.style.cursor = tool === 'PAN' ? 'grab' : ((tool === 'POLY' || tool === 'CURVE' || tool === 'SHAPE') ? 'crosshair' : 'default');
+    canvas.style.cursor = tool === 'PAN' ? 'grab' : ((tool === 'POLY' || tool === 'CURVE' || tool === 'SHAPE' || tool === 'CALIBRATE') ? 'crosshair' : 'default');
     
     if (tool !== 'SELECT' && tool !== 'TRANSFORM') {
-        selectedShape = null;
+        selectedShapes = [];
         updatePropertiesPanel();
     }
     draw();
@@ -287,34 +587,106 @@ const propsContainer = document.getElementById('propertiesPanel');
 
 [propX, propY, propW, propH].forEach(input => {
     input.addEventListener('change', (e) => {
-        if (selectedShape && (selectedShape.type === 'shape' || selectedShape.type === 'rect')) {
-            selectedShape.x = parseFloat(propX.value);
-            selectedShape.y = parseFloat(propY.value);
-            selectedShape.w = parseFloat(propW.value);
-            selectedShape.h = parseFloat(propH.value);
-            if (shrinkwrapActive) updateShrinkwrap();
-            saveState(); draw();
+        if (selectedShapes.length === 1) {
+            let s = selectedShapes[0];
+            if (s.type === 'shape' || s.type === 'rect') {
+                s.x = parseFloat(propX.value);
+                s.y = parseFloat(propY.value);
+                s.w = parseFloat(propW.value);
+                s.h = parseFloat(propH.value);
+                if (shrinkwrapActive) updateShrinkwrap();
+                saveState(); draw();
+            }
         }
     });
 });
 
+function getPolygonArea(vertices) {
+    if (!vertices || vertices.length < 3) return 0;
+    let regions = []; let currentReg = [];
+    vertices.forEach(v => {
+        if (v.moveTo && currentReg.length > 0) { regions.push(currentReg); currentReg = []; }
+        currentReg.push(v);
+    });
+    if (currentReg.length > 0) regions.push(currentReg);
+    
+    let totalArea = 0;
+    regions.forEach(reg => {
+        if (reg.length < 3) return;
+        let area = 0;
+        for (let i = 0; i < reg.length; i++) {
+            let j = (i + 1) % reg.length;
+            area += reg[i].x * reg[j].y;
+            area -= reg[j].x * reg[i].y;
+        }
+        totalArea += (area / 2);
+    });
+    return Math.abs(totalArea);
+}
+
 function updatePropertiesPanel() {
-    if (selectedShape && (selectedShape.type === 'shape' || selectedShape.type === 'rect')) {
-        propsContainer.style.display = 'block';
-        propX.value = Math.round(selectedShape.x);
-        propY.value = Math.round(selectedShape.y);
-        propW.value = Math.round(selectedShape.w);
-        propH.value = Math.round(selectedShape.h);
+    const propsContainer = document.getElementById('propertiesPanel');
+    const multiContainer = document.getElementById('multiPropertiesPanel');
+    
+    let computeArea = () => {
+        if (selectedShapes.length === 0) return 0;
+        let areaPx = 0;
+        selectedShapes.forEach(s => {
+            let p = deepConvertToPoly(JSON.parse(JSON.stringify(s)));
+            if (p.type === 'group') {
+                const extractArea = (g) => {
+                    g.children.forEach(c => {
+                        if (c.type === 'group') extractArea(c);
+                        else if (c.vertices) areaPx += getPolygonArea(c.vertices);
+                    });
+                };
+                extractArea(p);
+            } else if (p.vertices) {
+                areaPx += getPolygonArea(p.vertices);
+            }
+        });
+        return areaPx;
+    };
+    
+    let areaPx = computeArea();
+    let realArea = areaPx / (pixelsPerUnit * pixelsPerUnit);
+    document.querySelectorAll('.propAreaVal').forEach(el => el.textContent = realArea < 10 ? realArea.toFixed(2) : Math.round(realArea));
+    document.querySelectorAll('.propAreaUnit').forEach(el => el.textContent = currentUnit + "²");
+
+    if (selectedShapes.length === 1) {
+        multiContainer.style.display = 'none';
+        let s = selectedShapes[0];
+        document.getElementById('btnEditBlock').style.display = s.type === 'blockRef' ? 'inline-block' : 'none';
+        document.getElementById('btnMakeBlock').style.display = s.type === 'blockRef' ? 'none' : 'inline-block';
+        
+        if (s.type === 'shape' || s.type === 'rect') {
+            propsContainer.style.display = 'block';
+            propX.value = Math.round(s.x);
+            propY.value = Math.round(s.y);
+            propW.value = Math.round(s.w);
+            propH.value = Math.round(s.h);
+        } else {
+            propsContainer.style.display = 'none';
+        }
+    } else if (selectedShapes.length > 1) {
+        propsContainer.style.display = 'none';
+        multiContainer.style.display = 'block';
+        document.getElementById('btnEditBlock').style.display = 'none';
+        document.getElementById('btnMakeBlock').style.display = 'inline-block';
+        document.getElementById('multiSelectionText').textContent = `${selectedShapes.length} Items Selected`;
     } else {
         propsContainer.style.display = 'none';
+        multiContainer.style.display = 'none';
+        document.getElementById('btnEditBlock').style.display = 'none';
+        document.getElementById('btnMakeBlock').style.display = 'inline-block';
     }
 }
 
 // Setup Standard UI Listeners
 document.getElementById('semanticColor').addEventListener('change', (e) => {
     currentClassColor = e.target.value;
-    if (selectedShape) {
-        selectedShape.fillColor = currentClassColor;
+    if (selectedShapes.length > 0) {
+        selectedShapes.forEach(s => s.fillColor = currentClassColor);
         saveState(); draw();
     }
 });
@@ -347,8 +719,8 @@ btnShrinkwrap.addEventListener('click', () => {
     }
 });
 document.getElementById('btnExportPNG').addEventListener('click', () => {
-    const wasSelected = selectedShape;
-    selectedShape = null;
+    const wasSelected = [...selectedShapes];
+    selectedShapes = [];
     let oldTool = currentTool;
     currentTool = "EXPORTING"; 
     draw(); 
@@ -356,7 +728,7 @@ document.getElementById('btnExportPNG').addEventListener('click', () => {
     link.download = `mask_${Date.now()}.png`;
     link.href = canvas.toDataURL('image/png');
     link.click();
-    selectedShape = wasSelected;
+    selectedShapes = wasSelected;
     currentTool = oldTool;
     draw();
 });
@@ -383,7 +755,7 @@ document.getElementById('bgImageOpacity').addEventListener('input', (e) => {
     draw();
 });
 document.getElementById('btnSaveJSON').addEventListener('click', () => {
-    const data = { shapes, shrinkwrapShape, bgColor, floorVisible, panOffsetX, panOffsetY };
+    const data = { shapes, shrinkwrapShape, bgColor, floorVisible, panOffsetX, panOffsetY, blockLibrary };
     const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -403,10 +775,11 @@ document.getElementById('jsonUpload').addEventListener('change', (e) => {
             floorVisible = data.floorVisible || false;
             panOffsetX = data.panOffsetX || 0;
             panOffsetY = data.panOffsetY || 0;
+            blockLibrary = data.blockLibrary || {};
             document.getElementById('bgColor').value = bgColor;
             if (floorVisible) { btnFloor.title = "Remove Floor Plane"; btnFloor.classList.add('active'); } 
             else { btnFloor.title = "Add Floor Plane"; btnFloor.classList.remove('active'); }
-            selectedShape = null; saveState(); draw();
+            selectedShapes = []; saveState(); draw();
         } catch (err) { alert("Error parsing JSON file"); }
     };
     reader.readAsText(file);
@@ -416,7 +789,7 @@ document.getElementById('jsonUpload').addEventListener('change', (e) => {
 function getSnapPoint(mx, my) {
     const snapDist = 10;
     for (let s of shapes) {
-        if (s === selectedShape) continue;
+        if (selectedShapes.includes(s)) continue;
         if (s.type === 'shape' || s.type === 'rect') {
             const pts = [
                 {x: s.x - s.w/2, y: s.y - s.h/2}, {x: s.x + s.w/2, y: s.y - s.h/2},
@@ -446,6 +819,11 @@ canvas.addEventListener('mousedown', (e) => {
         canvas.style.cursor = 'grabbing'; return;
     }
 
+    if (currentTool === 'CALIBRATE') {
+        calibrateStart = getSnapPoint(mx, my);
+        return;
+    }
+
     if (currentTool === 'POLY' || currentTool === 'CURVE') {
         const snap = getSnapPoint(mx, my);
         if (currentPolyVertices.length > 2 && Math.hypot(snap.x - currentPolyVertices[0].x, snap.y - currentPolyVertices[0].y) < 15) {
@@ -459,78 +837,115 @@ canvas.addEventListener('mousedown', (e) => {
         draw(); return;
     }
 
-    const snap = getSnapPoint(mx, my);
     if (currentTool === 'SHAPE') {
-        isDrawingShape = true; drawStartX = snap.x; drawStartY = snap.y; return;
+        isDrawingShape = true; drawStartX = getSnapPoint(mx, my).x; drawStartY = getSnapPoint(mx, my).y; return;
     }
 
-    if (currentTool === 'TRANSFORM' && selectedShape) {
+    if (currentTool === 'TRANSFORM' && selectedShapes.length > 0) {
         if (!currentTransformType.startsWith('array_')) {
             if (currentTransformType === 'copy') {
-                let clone = JSON.parse(JSON.stringify(selectedShape));
-                if (clone.type === 'shape' || clone.type === 'rect') { clone.x += 30; clone.y += 30; }
-                else if (clone.type === 'poly' || clone.type === 'curve') { clone.vertices.forEach(v => {v.x+=30;v.y+=30;}); }
-                shapes.push(clone); selectedShape = clone; saveState(); draw(); return;
+                let newlySelected = [];
+                selectedShapes.forEach(s => {
+                    let clone = JSON.parse(JSON.stringify(s));
+                    if (clone.type === 'shape' || clone.type === 'rect') { clone.x += 30; clone.y += 30; }
+                    else if (clone.type === 'poly' || clone.type === 'curve') { clone.vertices.forEach(v => {v.x+=30;v.y+=30;}); }
+                    shapes.push(clone); newlySelected.push(clone); 
+                });
+                selectedShapes = newlySelected; saveState(); draw(); return;
             }
+            
+            let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
+            selectedShapes.forEach((s, idx) => {
+                s = deepConvertToPoly(s); 
+                let i = shapes.indexOf(selectedShapes[idx]);
+                if(i>-1) shapes[i] = s;
+                selectedShapes[idx] = s;
+                
+                let b = getShapeBounds(s);
+                if (b.minX < minX) minX = b.minX; if (b.maxX > maxX) maxX = b.maxX;
+                if (b.minY < minY) minY = b.minY; if (b.maxY > maxY) maxY = b.maxY;
+            });
+            transformPivot = {x: (minX+maxX)/2, y: (minY+maxY)/2};
+            
             if (currentTransformType === 'mirror') {
-                let poly = convertShapeToPoly(selectedShape);
-                let cx=0; poly.vertices.forEach(v=>cx+=v.x); cx/=poly.vertices.length;
-                poly.vertices.forEach(v=>v.x = cx - (v.x - cx));
-                const idx = shapes.indexOf(selectedShape);
-                shapes[idx] = poly; selectedShape = poly; saveState(); draw(); return;
+                const mirrorDeep = (shape) => {
+                    if (shape.type === 'group') shape.children.forEach(c => mirrorDeep(c));
+                    else shape.vertices.forEach(v => v.x = transformPivot.x - (v.x - transformPivot.x));
+                };
+                selectedShapes.forEach(s => mirrorDeep(s));
+                saveState(); draw(); return;
             }
-            // Rotate & Shear
-            if (selectedShape.type !== 'poly' && selectedShape.type !== 'curve') {
-                const poly = convertShapeToPoly(selectedShape);
-                const idx = shapes.indexOf(selectedShape); shapes[idx] = poly; selectedShape = poly;
-            }
+
             transformActive = true;
-            let cx=0, cy=0; selectedShape.vertices.forEach(v=>{cx+=v.x; cy+=v.y;});
-            transformPivot = {x: cx/selectedShape.vertices.length, y: cy/selectedShape.vertices.length};
-            transformOriginalPoly = JSON.parse(JSON.stringify(selectedShape));
+            transformOriginalPoly = JSON.parse(JSON.stringify(selectedShapes));
             transformStartAngle = Math.atan2(my - transformPivot.y, mx - transformPivot.x);
             transformStartMouse = {x: mx, y: my};
             return;
         }
     }
 
-    // SELECT TOOL logic
-    let clickedOnShape = false;
-    for (let i = shapes.length - 1; i >= 0; i--) {
-        const s = shapes[i];
-        if (s.type === 'shape' || s.type === 'rect') {
-            const corner = getResizeCorner(s, mx, my);
-            if (corner) {
-                selectedShape = s; resizing = true; resizeCorner = corner; clickedOnShape = true; break;
-            } else if (mx > s.x - s.w/2 && mx < s.x + s.w/2 && my > s.y - s.h/2 && my < s.y + s.h/2) {
-                selectedShape = s; isDragging = true; dragOffsetX = s.x - mx; dragOffsetY = s.y - my; clickedOnShape = true; break;
+    if (currentTool === 'SELECT') {
+        let clickedShape = null;
+        let hitHandle = null;
+
+        if (selectedShapes.length === 1 && !selectedShapes[0].isShrinkwrap) {
+            let s = selectedShapes[0];
+            if (s.type === 'shape' || s.type === 'rect') hitHandle = getResizeCorner(s, mx, my);
+            else if (s.type === 'poly' || s.type === 'curve') {
+                for(let v=0; v<s.vertices.length; v++) if (Math.hypot(mx - s.vertices[v].x, my - s.vertices[v].y) < 8) { hitHandle = "v"+v; break; }
             }
-        } else if (s.type === 'poly' || s.type === 'curve') {
-            let vertexClicked = -1;
-            for(let v=0; v<s.vertices.length; v++) {
-                if (Math.hypot(mx - s.vertices[v].x, my - s.vertices[v].y) < 8) { vertexClicked = v; break; }
+            if (hitHandle) {
+                if (hitHandle.startsWith('v')) selectedNodeIndex = parseInt(hitHandle.substring(1));
+                else selectedNodeIndex = -1;
+                resizing = true; resizeCorner = hitHandle; return;
             }
-            if (vertexClicked > -1) {
-                selectedShape = s; resizing = true; resizeCorner = "v" + vertexClicked; clickedOnShape = true; break;
-            } else if (ptInConvexPolygon(mx, my, s.vertices)) {
-                selectedShape = s; isDragging = true; dragOffsetX = mx; dragOffsetY = my; clickedOnShape = true; break;
+            
+            if (s.type === 'poly' || s.type === 'curve') {
+                for(let i=0; i<s.vertices.length; i++) {
+                    let v1 = s.vertices[i]; let v2 = s.vertices[(i+1)%s.vertices.length];
+                    if (v2.moveTo || v1.moveTo) continue;
+                    let l2 = Math.pow(v1.x - v2.x, 2) + Math.pow(v1.y - v2.y, 2);
+                    if (l2 === 0) continue;
+                    let t = Math.max(0, Math.min(1, ((rawMx - v1.x) * (v2.x - v1.x) + (rawMy - v1.y) * (v2.y - v1.y)) / l2));
+                    let projX = v1.x + t * (v2.x - v1.x); let projY = v1.y + t * (v2.y - v1.y);
+                    if (Math.hypot(rawMx - projX, rawMy - projY) < 5) {
+                        s.vertices.splice(i+1, 0, {x: projX, y: projY});
+                        selectedNodeIndex = i+1; resizing = true; resizeCorner = "v" + (i+1);
+                        saveState(); draw(); return;
+                    }
+                }
             }
         }
+        
+        for (let i = shapes.length - 1; i >= 0; i--) {
+            if (hitTest(shapes[i], mx, my)) { clickedShape = shapes[i]; break; }
+        }
+        if (!clickedShape && shrinkwrapShape && hitTest(shrinkwrapShape, mx, my)) clickedShape = shrinkwrapShape;
+        
+        if (clickedShape) {
+            if (e.shiftKey) {
+                let idx = selectedShapes.indexOf(clickedShape);
+                if (idx > -1) selectedShapes.splice(idx, 1);
+                else selectedShapes.push(clickedShape);
+            } else {
+                if (!selectedShapes.includes(clickedShape)) selectedShapes = [clickedShape];
+            }
+            isDragging = true;
+            dragStartPoint = {x: mx, y: my};
+        } else {
+            selectedShapes = [];
+            selectedNodeIndex = -1;
+            isMarquee = true;
+            marqueeStart = {x: mx, y: my};
+            marqueeCurrent = {x: mx, y: my};
+        }
+        
+        const selColor = document.getElementById('semanticColor');
+        if (selectedShapes.length > 0 && !selectedShapes[0].isShrinkwrap) {
+            selColor.value = selectedShapes[0].fillColor; currentClassColor = selectedShapes[0].fillColor;
+        }
+        updatePropertiesPanel(); draw();
     }
-    
-    // Check shrinkwrap
-    if (!clickedOnShape && shrinkwrapShape && ptInConvexPolygon(mx, my, shrinkwrapShape.vertices)) {
-       selectedShape = shrinkwrapShape; clickedOnShape = true;
-    }
-    
-    if (!clickedOnShape) selectedShape = null;
-    
-    const selColor = document.getElementById('semanticColor');
-    if (selectedShape && !selectedShape.isShrinkwrap) {
-        selColor.value = selectedShape.fillColor; currentClassColor = selectedShape.fillColor;
-    }
-    
-    updatePropertiesPanel(); draw();
 });
 
 canvas.addEventListener('mousemove', (e) => {
@@ -543,6 +958,16 @@ canvas.addEventListener('mousemove', (e) => {
 
     if (isPanning) {
         panOffsetX = e.clientX - dragOffsetX; panOffsetY = e.clientY - dragOffsetY; draw(); return;
+    }
+
+    if (currentTool === 'CALIBRATE' && calibrateStart) {
+        draw();
+        ctx.beginPath(); ctx.moveTo(calibrateStart.x, calibrateStart.y); ctx.lineTo(mx, my);
+        ctx.strokeStyle = '#ff00ff'; ctx.lineWidth = 2; ctx.stroke();
+        let dist = Math.hypot(mx - calibrateStart.x, my - calibrateStart.y);
+        ctx.fillStyle = '#ff00ff'; ctx.font = "14px Arial";
+        ctx.fillText(`${Math.round(dist)} px`, mx + 10, my - 10);
+        return;
     }
 
     if (isDrawingShape) {
@@ -558,7 +983,6 @@ canvas.addEventListener('mousemove', (e) => {
         draw();
         let pts = [...currentPolyVertices, {x: mx, y: my}];
         if (currentTool === 'CURVE') pts = chaikinOpen(pts, 4);
-        
         ctx.beginPath();
         ctx.moveTo(pts[0].x, pts[0].y);
         for(let i=1; i<pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
@@ -566,61 +990,79 @@ canvas.addEventListener('mousemove', (e) => {
         return;
     }
 
-    if (transformActive && selectedShape) {
-        if (currentTransformType === 'rotate') {
-            let currentAngle = Math.atan2(my - transformPivot.y, mx - transformPivot.x);
-            let dTheta = currentAngle - transformStartAngle;
-            for(let i=0; i<selectedShape.vertices.length; i++) {
-                let ov = transformOriginalPoly.vertices[i];
-                let dx = ov.x - transformPivot.x, dy = ov.y - transformPivot.y;
-                selectedShape.vertices[i].x = transformPivot.x + dx*Math.cos(dTheta) - dy*Math.sin(dTheta);
-                selectedShape.vertices[i].y = transformPivot.y + dx*Math.sin(dTheta) + dy*Math.cos(dTheta);
+    if (transformActive && selectedShapes.length > 0) {
+        let currentAngle = Math.atan2(my - transformPivot.y, mx - transformPivot.x);
+        let dTheta = currentAngle - transformStartAngle;
+        let dxMouse = mx - transformStartMouse.x;
+        
+        const applyTransformDeep = (s, orig, cType) => {
+            if (s.type === 'group') {
+                s.children.forEach((c, idx) => applyTransformDeep(c, orig.children[idx], cType));
+            } else {
+                for(let i=0; i<s.vertices.length; i++) {
+                    let ov = orig.vertices[i];
+                    if (cType === 'rotate') {
+                        let dx = ov.x - transformPivot.x, dy = ov.y - transformPivot.y;
+                        s.vertices[i].x = transformPivot.x + dx*Math.cos(dTheta) - dy*Math.sin(dTheta);
+                        s.vertices[i].y = transformPivot.y + dx*Math.sin(dTheta) + dy*Math.cos(dTheta);
+                    } else if (cType === 'shear') {
+                        let factor = (ov.y - transformPivot.y) / 50; 
+                        s.vertices[i].x = ov.x + dxMouse * factor;
+                        s.vertices[i].y = ov.y;
+                    }
+                }
             }
-        } else if (currentTransformType === 'shear') {
-            let dxMouse = mx - transformStartMouse.x;
-            for(let i=0; i<selectedShape.vertices.length; i++) {
-                let ov = transformOriginalPoly.vertices[i];
-                let factor = (ov.y - transformPivot.y) / 50; 
-                selectedShape.vertices[i].x = ov.x + dxMouse * factor;
-                selectedShape.vertices[i].y = ov.y;
-            }
-        }
+        };
+
+        selectedShapes.forEach((s, shapeIdx) => {
+            applyTransformDeep(s, transformOriginalPoly[shapeIdx], currentTransformType);
+        });
         if (shrinkwrapActive) updateShrinkwrap();
         draw(); return;
     }
 
     if (currentTool === 'SELECT') {
-        if (resizing && selectedShape) {
-            if (selectedShape.type === 'shape' || selectedShape.type === 'rect') {
-                resizeShape(selectedShape, mx, my, resizeCorner);
-            } else if (selectedShape.type === 'poly' || selectedShape.type === 'curve') {
+        if (resizing && selectedShapes.length === 1) {
+            let s = selectedShapes[0];
+            if (s.type === 'shape' || s.type === 'rect') resizeShape(s, mx, my, resizeCorner);
+            else if (s.type === 'poly' || s.type === 'curve') {
                 let vIdx = parseInt(resizeCorner.substring(1));
-                selectedShape.vertices[vIdx].x = mx; selectedShape.vertices[vIdx].y = my;
+                s.vertices[vIdx].x = mx; s.vertices[vIdx].y = my;
             }
             if (shrinkwrapActive) updateShrinkwrap();
             updatePropertiesPanel(); draw();
-        } else if (isDragging && selectedShape && !selectedShape.isShrinkwrap) {
-            if (selectedShape.type === 'shape' || selectedShape.type === 'rect') {
-                selectedShape.x = mx + dragOffsetX; selectedShape.y = my + dragOffsetY;
-            } else if (selectedShape.type === 'poly' || selectedShape.type === 'curve') {
-                let dx = mx - dragOffsetX, dy = my - dragOffsetY;
-                selectedShape.vertices.forEach(v => { v.x += dx; v.y += dy; });
-                dragOffsetX = mx; dragOffsetY = my;
-            }
+        } else if (isDragging && selectedShapes.length > 0) {
+            let dx = mx - dragStartPoint.x;
+            let dy = my - dragStartPoint.y;
+        selectedShapes.forEach(s => {
+                translateShape(s, dx, dy);
+            });
+            dragStartPoint = {x: mx, y: my};
             if (shrinkwrapActive) updateShrinkwrap();
             updatePropertiesPanel(); draw();
+        } else if (isMarquee) {
+            marqueeCurrent = {x: mx, y: my};
+            let minX = Math.min(marqueeStart.x, marqueeCurrent.x);
+            let maxX = Math.max(marqueeStart.x, marqueeCurrent.x);
+            let minY = Math.min(marqueeStart.y, marqueeCurrent.y);
+            let maxY = Math.max(marqueeStart.y, marqueeCurrent.y);
+            
+            selectedShapes = shapes.filter(s => {
+                let b = getShapeBounds(s);
+                return !(b.maxX < minX || b.minX > maxX || b.maxY < minY || b.minY > maxY);
+            });
+            draw();
         } else {
-            // Hover logic
             let hoveringHndl = false, hoveringShape = false;
-            for (let i = shapes.length - 1; i >= 0; i--) {
-                const s = shapes[i];
-                if (s.type === 'shape' || s.type === 'rect') {
-                    if (getResizeCorner(s, rawMx, rawMy)) { hoveringHndl = true; break; }
-                    else if (rawMx > s.x - s.w/2 && rawMx < s.x + s.w/2 && rawMy > s.y - s.h/2 && rawMy < s.y + s.h/2) { hoveringShape = true; break; }
-                } else if (s.type === 'poly' || s.type === 'curve') {
-                    for(let v=0; v<s.vertices.length; v++) if (Math.hypot(rawMx - s.vertices[v].x, rawMy - s.vertices[v].y) < 8) { hoveringHndl = true; break; }
-                    if (!hoveringHndl && ptInConvexPolygon(rawMx, rawMy, s.vertices)) { hoveringShape = true; break; }
+            if (selectedShapes.length === 1 && !selectedShapes[0].isShrinkwrap) {
+                let s = selectedShapes[0];
+                if (s.type === 'shape' || s.type === 'rect') { if(getResizeCorner(s, rawMx, rawMy)) hoveringHndl=true; }
+                else if (s.type === 'poly' || s.type === 'curve') {
+                    for(let v=0; v<s.vertices.length; v++) if (Math.hypot(rawMx - s.vertices[v].x, rawMy - s.vertices[v].y) < 8) hoveringHndl = true;
                 }
+            }
+            if (!hoveringHndl) {
+                for (let i = shapes.length - 1; i >= 0; i--) if (hitTest(shapes[i], rawMx, rawMy)) { hoveringShape = true; break; }
             }
             if (hoveringHndl) canvas.style.cursor = 'crosshair';
             else if (hoveringShape) canvas.style.cursor = 'move';
@@ -631,6 +1073,28 @@ canvas.addEventListener('mousemove', (e) => {
 
 canvas.addEventListener('mouseup', (e) => {
     if (isPanning) { isPanning = false; canvas.style.cursor = 'grab'; }
+    if (currentTool === 'CALIBRATE' && calibrateStart) {
+        const rect = canvas.getBoundingClientRect();
+        let rawMx = e.clientX - rect.left - panOffsetX, rawMy = e.clientY - rect.top - panOffsetY;
+        let snap = getSnapPoint(rawMx, rawMy);
+        let mx = e.shiftKey ? rawMx : snap.x, my = e.shiftKey ? rawMy : snap.y;
+        let dist = Math.hypot(mx - calibrateStart.x, my - calibrateStart.y);
+        if (dist > 10) {
+            let userVal = prompt(`Line is ${Math.round(dist)} pixels.\nEnter actual length and unit (e.g. '0.9 m' or '12 ft'):`);
+            if (userVal) {
+                let match = userVal.trim().match(/^([\d.]+)\s*([a-zA-Z]+)?$/);
+                if (match) {
+                    let val = parseFloat(match[1]);
+                    if (val > 0) {
+                        pixelsPerUnit = dist / val;
+                        currentUnit = match[2] || "units";
+                        updatePropertiesPanel();
+                    }
+                }
+            }
+        }
+        calibrateStart = null; setTool('SELECT'); return;
+    }
     if (isDrawingShape) {
         const rect = canvas.getBoundingClientRect();
         let rawMx = e.clientX - rect.left - panOffsetX, rawMy = e.clientY - rect.top - panOffsetY;
@@ -749,6 +1213,35 @@ function drawShapePrimitive(ctx, type, cx, cy, w, h) {
     ctx.closePath(); ctx.fill();
 }
 
+function drawShapeNode(ctx, s, isExport) {
+    if (s.type === 'group') {
+        s.children.forEach(c => drawShapeNode(ctx, c, isExport));
+        return;
+    }
+    if (s.type === 'blockRef') {
+        let master = blockLibrary[s.blockId];
+        if (master) {
+            ctx.save(); ctx.translate(s.x, s.y);
+            master.children.forEach(c => drawShapeNode(ctx, c, isExport));
+            ctx.restore();
+        }
+        return;
+    }
+    ctx.fillStyle = s.fillColor; ctx.globalAlpha = isExport ? 1.0 : 0.85;
+    if (s.type === 'shape' || s.type === 'rect') {
+        drawShapePrimitive(ctx, s.subType || 'rect', s.x, s.y, s.w, s.h);
+    } else if ((s.type === 'poly' || s.type === 'curve') && s.vertices.length > 0) {
+        ctx.beginPath();
+        let pts = s.type === 'curve' ? chaikinClosed(s.vertices, 4) : s.vertices;
+        pts.forEach((v, i) => {
+            if (i === 0 || v.moveTo) ctx.moveTo(v.x, v.y);
+            else ctx.lineTo(v.x, v.y);
+        });
+        ctx.closePath(); ctx.fill('evenodd');
+    }
+    ctx.globalAlpha = 1.0;
+}
+
 function draw() {
     ctx.fillStyle = `rgb(${bgColor}, ${bgColor}, ${bgColor})`; ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (bgImage) {
@@ -762,34 +1255,38 @@ function draw() {
         ctx.fillStyle = shrinkwrapShape.fillColor; ctx.beginPath(); ctx.moveTo(shrinkwrapShape.vertices[0].x, shrinkwrapShape.vertices[0].y);
         for (let i = 1; i < shrinkwrapShape.vertices.length; i++) ctx.lineTo(shrinkwrapShape.vertices[i].x, shrinkwrapShape.vertices[i].y);
         ctx.closePath(); ctx.globalAlpha = currentTool === "EXPORTING" ? 1.0 : 0.4; ctx.fill(); ctx.globalAlpha = 1.0;
-        if (shrinkwrapShape === selectedShape && currentTool !== "EXPORTING") { ctx.strokeStyle = "rgba(255,255,255,0.8)"; ctx.lineWidth = 2; ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([]); }
+        if (selectedShapes.includes(shrinkwrapShape) && currentTool !== "EXPORTING") { ctx.strokeStyle = "rgba(255,255,255,0.8)"; ctx.lineWidth = 2; ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([]); }
     }
     
     for (let s of shapes) {
-        ctx.fillStyle = s.fillColor; ctx.globalAlpha = currentTool === "EXPORTING" ? 1.0 : 0.85;
-        if (s.type === 'shape' || s.type === 'rect') {
-            drawShapePrimitive(ctx, s.subType || 'rect', s.x, s.y, s.w, s.h);
-        } else if ((s.type === 'poly' || s.type === 'curve') && s.vertices.length > 0) {
-            ctx.beginPath();
-            let pts = s.type === 'curve' ? chaikinClosed(s.vertices, 4) : s.vertices;
-            ctx.moveTo(pts[0].x, pts[0].y);
-            for (let i=1; i<pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-            ctx.closePath(); ctx.fill();
-        }
-        ctx.globalAlpha = 1.0;
+        drawShapeNode(ctx, s, currentTool === "EXPORTING");
         
-        if (s === selectedShape && currentTool !== "EXPORTING") {
+        if (selectedShapes.includes(s) && currentTool !== "EXPORTING") {
             ctx.fillStyle = "white"; ctx.strokeStyle = "rgba(0,0,0,0.5)"; ctx.lineWidth = 1;
             const drawHndl = (hx, hy) => { ctx.beginPath(); ctx.arc(hx, hy, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); };
-            if (s.type === 'shape' || s.type === 'rect') {
-                drawHndl(s.x - s.w/2, s.y - s.h/2); drawHndl(s.x + s.w/2, s.y - s.h/2); drawHndl(s.x - s.w/2, s.y + s.h/2); drawHndl(s.x + s.w/2, s.y + s.h/2);
+            
+            if (s.type === 'group' || s.type === 'blockRef') {
+                let b = getShapeBounds(s);
+                ctx.strokeStyle = s.type === 'blockRef' ? "rgba(255,100,200,0.8)" : "rgba(100,200,255,0.8)"; 
+                ctx.setLineDash([4, 4]); ctx.strokeRect(b.minX, b.minY, b.maxX-b.minX, b.maxY-b.minY); ctx.setLineDash([]);
+            } else if (s.type === 'shape' || s.type === 'rect') {
+                if (selectedShapes.length === 1) {
+                    drawHndl(s.x - s.w/2, s.y - s.h/2); drawHndl(s.x + s.w/2, s.y - s.h/2); drawHndl(s.x - s.w/2, s.y + s.h/2); drawHndl(s.x + s.w/2, s.y + s.h/2);
+                }
                 ctx.strokeStyle = "rgba(255,255,255,0.8)"; ctx.setLineDash([4, 4]); ctx.strokeRect(s.x - s.w/2, s.y - s.h/2, s.w, s.h); ctx.setLineDash([]);
             } else if (s.type === 'poly' || s.type === 'curve') {
-                s.vertices.forEach(v => drawHndl(v.x, v.y));
+                if (selectedShapes.length === 1) {
+                    s.vertices.forEach((v, i) => {
+                        ctx.fillStyle = i === selectedNodeIndex ? "#FF3366" : "white";
+                        drawHndl(v.x, v.y);
+                    });
+                }
                 ctx.strokeStyle = "rgba(255,255,255,0.8)"; ctx.setLineDash([4, 4]); ctx.beginPath();
-                ctx.moveTo(s.vertices[0].x, s.vertices[0].y);
-                for (let i=1; i<s.vertices.length; i++) ctx.lineTo(s.vertices[i].x, s.vertices[i].y);
-                if (s.type === 'poly' || s.type === 'curve') ctx.closePath(); // always close handles path
+                s.vertices.forEach((v, i) => {
+                    if (i === 0 || v.moveTo) ctx.moveTo(v.x, v.y);
+                    else ctx.lineTo(v.x, v.y);
+                });
+                if (s.type === 'poly' || s.type === 'curve') ctx.closePath();
                 ctx.stroke(); ctx.setLineDash([]);
             }
         }
@@ -801,6 +1298,19 @@ function draw() {
         for(let i=1; i<pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
         ctx.stroke();
     }
+
+    if (isMarquee && currentTool === 'SELECT') {
+        ctx.fillStyle = "rgba(0, 120, 255, 0.1)";
+        ctx.strokeStyle = "rgba(0, 120, 255, 0.8)";
+        ctx.lineWidth = 1;
+        let minX = Math.min(marqueeStart.x, marqueeCurrent.x);
+        let minY = Math.min(marqueeStart.y, marqueeCurrent.y);
+        let w = Math.abs(marqueeCurrent.x - marqueeStart.x);
+        let h = Math.abs(marqueeCurrent.y - marqueeStart.y);
+        ctx.fillRect(minX, minY, w, h);
+        ctx.strokeRect(minX, minY, w, h);
+    }
+
     ctx.restore();
 }
 
@@ -810,3 +1320,94 @@ function resizeCanvas() {
     draw();
 }
 window.addEventListener('resize', resizeCanvas); resizeCanvas(); 
+
+// --- AI Generation Logic ---
+const btnGenerateAI = document.getElementById('btnGenerateAI');
+const aiPrompt = document.getElementById('aiPrompt');
+const aiStyle = document.getElementById('aiStyle');
+const aiLoading = document.getElementById('aiLoading');
+const comparisonModal = document.getElementById('comparisonModal');
+const btnCloseModal = document.getElementById('btnCloseModal');
+const imgOriginal = document.getElementById('imgOriginal');
+const imgGenerated = document.getElementById('imgGenerated');
+const btnDownloadResult = document.getElementById('btnDownloadResult');
+
+let currentGeneratedUrl = null;
+
+btnGenerateAI.addEventListener('click', async () => {
+    const promptText = aiPrompt.value.trim();
+    if (!promptText) {
+        alert("Please enter a prompt describing the design.");
+        return;
+    }
+
+    const wasSelected = selectedShape;
+    selectedShape = null;
+    let oldTool = currentTool;
+    currentTool = "EXPORTING"; 
+    draw(); 
+    const imageBase64 = canvas.toDataURL('image/png');
+    selectedShape = wasSelected;
+    currentTool = oldTool;
+    draw();
+
+    btnGenerateAI.disabled = true;
+    aiLoading.style.display = 'block';
+
+    try {
+        const response = await fetch('/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                imageBase64: imageBase64,
+                userPrompt: promptText,
+                style: aiStyle.value,
+                controlMode: 'canny'
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to generate image');
+        }
+
+        if (data.imageUrl) {
+            currentGeneratedUrl = data.imageUrl;
+            imgOriginal.src = imageBase64;
+            imgGenerated.src = data.imageUrl;
+            comparisonModal.classList.add('active');
+        } else {
+            throw new Error('No image URL returned.');
+        }
+
+    } catch (err) {
+        console.error("Generation Error:", err);
+        alert("Generation failed: " + err.message);
+    } finally {
+        btnGenerateAI.disabled = false;
+        aiLoading.style.display = 'none';
+    }
+});
+
+btnCloseModal.addEventListener('click', () => {
+    comparisonModal.classList.remove('active');
+});
+
+btnDownloadResult.addEventListener('click', async () => {
+    if (!currentGeneratedUrl) return;
+    try {
+        const response = await fetch(currentGeneratedUrl);
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `ai_exterior_${Date.now()}.jpg`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    } catch(err) {
+        window.open(currentGeneratedUrl, '_blank');
+    }
+});
