@@ -60,7 +60,7 @@ body { font-family: 'Inter', sans-serif; background-color: #1e1e1e; color: #ddd;
 }
 .tool-group:hover .flyout-menu { display: flex; }
 
-.flyout-btn {
+.flyout-btn, .flyout-btn-tx {
   background: transparent;
   border: none;
   color: #a0a0a0;
@@ -74,9 +74,9 @@ body { font-family: 'Inter', sans-serif; background-color: #1e1e1e; color: #ddd;
   gap: 10px;
   border-radius: 4px;
 }
-.flyout-btn i { font-size: 16px; width: 16px; text-align: center; }
-.flyout-btn:hover { background: #333; color: #fff; }
-.flyout-btn.active { background: #0e639c; color: #fff; }
+.flyout-btn i, .flyout-btn-tx i { font-size: 16px; width: 16px; text-align: center; }
+.flyout-btn:hover, .flyout-btn-tx:hover { background: #333; color: #fff; }
+.flyout-btn.active, .flyout-btn-tx.active { background: #0e639c; color: #fff; }
 
 /* Main View */
 #main-view {

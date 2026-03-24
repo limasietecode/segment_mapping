@@ -32,6 +32,24 @@
         </div>
 
         <button id="toolPoly" title="Polygon (P)" class="tool-btn"><i class="ph ph-polygon"></i></button>
+        
+        <!-- Transform Toolbar Group -->
+        <div class="tool-group">
+          <button id="toolTransform" title="Transform (T)" class="tool-btn">
+            <i id="currentTransformIcon" class="ph ph-arrows-out-cardinal"></i>
+            <span class="flyout-arrow"></span>
+          </button>
+          <div class="flyout-menu" id="transformFlyout">
+            <button class="flyout-btn-tx active" data-tx="copy" data-icon="ph-copy"><i class="ph ph-copy"></i> Copy</button>
+            <button class="flyout-btn-tx" data-tx="rotate" data-icon="ph-arrows-clockwise"><i class="ph ph-arrows-clockwise"></i> Rotate</button>
+            <button class="flyout-btn-tx" data-tx="mirror" data-icon="ph-arrows-left-right"><i class="ph ph-arrows-left-right"></i> Mirror</button>
+            <button class="flyout-btn-tx" data-tx="shear" data-icon="ph-parallelogram"><i class="ph ph-parallelogram"></i> Shear</button>
+            <div class="divider"></div>
+            <button class="flyout-btn-tx" data-tx="array_rect" data-icon="ph-squares-four"><i class="ph ph-squares-four"></i> Rect Array</button>
+            <button class="flyout-btn-tx" data-tx="array_polar" data-icon="ph-spinner"><i class="ph ph-spinner"></i> Polar Array</button>
+          </div>
+        </div>
+
         <button id="toolPan" title="Pan (H)" class="tool-btn"><i class="ph ph-hand-palm"></i></button>
         <div class="divider"></div>
         <button id="btnFloor" title="Add Floor Plane" class="tool-btn"><i class="ph ph-align-bottom"></i></button>
@@ -76,6 +94,28 @@
                 <label style="display:flex;justify-content:space-between;"><span>Shrinkwrap Offset</span> <span id="shrinkOffsetVal" style="color:#fff">10</span></label>
                 <input type="range" id="shrinkOffset" min="0" max="50" value="10">
             </div>
+          </div>
+        </div>
+
+        <!-- Floating Array Panel -->
+        <div id="array-panel" class="floating-window" style="display:none; top: 15px; left: 70px; width: 220px;">
+          <div class="window-header" id="arrayPanelTitle">Properties</div>
+          <div class="window-content" id="arrayRectOptions" style="display:none;">
+              <div class="props-grid">
+                  <div><label>Rows</label><input type="number" id="arrRows" value="2" min="1"></div>
+                  <div><label>Cols</label><input type="number" id="arrCols" value="2" min="1"></div>
+                  <div><label>Gap Y</label><input type="number" id="arrGapY" value="10"></div>
+                  <div><label>Gap X</label><input type="number" id="arrGapX" value="10"></div>
+              </div>
+              <button id="btnApplyRectArray" class="mini-btn primary" style="width:100%; margin-top:10px; justify-content:center;">Apply Array</button>
+          </div>
+          <div class="window-content" id="arrayPolarOptions" style="display:none;">
+              <div class="props-grid">
+                  <div style="grid-column: 1 / span 2; display:flex; align-items:center;"><label style="width:40px;">Count</label><input type="number" id="arrCount" value="6" min="2"></div>
+                  <div style="grid-column: 1 / span 2; display:flex; align-items:center;"><label style="width:40px;">Angle</label><input type="number" id="arrAngle" value="360" title="Degrees"></div>
+              </div>
+              <p style="font-size:10px; color:#aaa; margin-top:8px;">Rotates automatically along its own center.</p>
+              <button id="btnApplyPolarArray" class="mini-btn primary" style="width:100%; margin-top:10px; justify-content:center;">Apply Array</button>
           </div>
         </div>
       </div>

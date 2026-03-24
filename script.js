@@ -38,6 +38,28 @@ let currentPolyVertices = [];
 let currentShapeType = 'rect';
 let currentShapeIconClass = 'ph-square';
 
+// Transform State Variables
+let currentTransformType = 'copy';
+let transformActive = false;
+let transformOriginalPoly = null;
+let transformPivot = null;
+let transformStartAngle = 0;
+let transformStartMouse = null;
+
+function convertShapeToPoly(s) {
+    if (s.type === 'poly') return JSON.parse(JSON.stringify(s));
+    let v = [];
+    if (s.type === 'shape' || s.type === 'rect') {
+        const dx = s.x - s.w/2, dy = s.y - s.h/2;
+        if (s.subType === 'triangle') v = [{x:s.x, y:dy}, {x:dx+s.w, y:dy+s.h}, {x:dx, y:dy+s.h}];
+        else if (s.subType === 'diamond') v = [{x:s.x, y:dy}, {x:dx+s.w, y:s.y}, {x:s.x, y:dy+s.h}, {x:dx, y:s.y}];
+        else if (s.subType === 'trapezoid') { let inset=s.w*0.25; v=[{x:dx+inset,y:dy},{x:dx+s.w-inset,y:dy},{x:dx+s.w,y:dy+s.h},{x:dx,y:dy+s.h}]; }
+        else if (s.subType === 'ellipse') { for(let i=0;i<24;i++) { let a=(i/24)*Math.PI*2; v.push({x:s.x+(s.w/2)*Math.cos(a),y:s.y+(s.h/2)*Math.sin(a)}); } }
+        else v = [{x:dx,y:dy}, {x:dx+s.w,y:dy}, {x:dx+s.w,y:dy+s.h}, {x:dx,y:dy+s.h}]; // rect, round_rect, human bbox
+    }
+    return { type: 'poly', vertices: v, fillColor: s.fillColor };
+}
+
 function saveState() {
     historyStack = historyStack.slice(0, historyIndex + 1);
     const clone = JSON.parse(JSON.stringify({shapes: shapes, shrinkwrapShape: shrinkwrapShape}));
@@ -116,6 +138,7 @@ window.addEventListener('keydown', (e) => {
 document.getElementById('toolSelect').addEventListener('click', () => setTool('SELECT'));
 document.getElementById('toolShape').addEventListener('click', () => setTool('SHAPE'));
 document.getElementById('toolPoly').addEventListener('click', () => setTool('POLY'));
+document.getElementById('toolTransform').addEventListener('click', () => setTool('TRANSFORM'));
 document.getElementById('toolPan').addEventListener('click', () => setTool('PAN'));
 
 document.querySelectorAll('.flyout-btn').forEach(btn => {
@@ -123,14 +146,79 @@ document.querySelectorAll('.flyout-btn').forEach(btn => {
         e.stopPropagation();
         document.querySelectorAll('.flyout-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        
         currentShapeType = btn.dataset.shape;
-        currentShapeIconClass = btn.dataset.icon;
-        
-        document.getElementById('currentShapeIcon').className = `ph ${currentShapeIconClass}`;
+        document.getElementById('currentShapeIcon').className = `ph ${btn.dataset.icon}`;
         setTool('SHAPE');
     });
 });
+document.querySelectorAll('.flyout-btn-tx').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        document.querySelectorAll('.flyout-btn-tx').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentTransformType = btn.dataset.tx;
+        document.getElementById('currentTransformIcon').className = `ph ${btn.dataset.icon}`;
+        setTool('TRANSFORM');
+        
+        let pnl = document.getElementById('array-panel');
+        if (currentTransformType.startsWith('array_')) {
+            pnl.style.display = 'block';
+            document.getElementById('arrayRectOptions').style.display = currentTransformType==='array_rect'?'block':'none';
+            document.getElementById('arrayPolarOptions').style.display = currentTransformType==='array_polar'?'block':'none';
+            document.getElementById('arrayPanelTitle').textContent = currentTransformType==='array_rect'?'Rect Array Properties':'Polar Array Properties';
+        } else pnl.style.display = 'none';
+    });
+});
+
+document.getElementById('btnApplyRectArray').addEventListener('click', () => {
+    if (!selectedShape) return alert("Select a shape first.");
+    const rows = parseInt(document.getElementById('arrRows').value);
+    const cols = parseInt(document.getElementById('arrCols').value);
+    const gapX = parseFloat(document.getElementById('arrGapX').value);
+    const gapY = parseFloat(document.getElementById('arrGapY').value);
+    const basePoly = convertShapeToPoly(selectedShape);
+    let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
+    basePoly.vertices.forEach(v=>{if(v.x<minX)minX=v.x; if(v.x>maxX)maxX=v.x; if(v.y<minY)minY=v.y; if(v.y>maxY)maxY=v.y;});
+    
+    let stepX = (maxX - minX) + gapX;
+    let stepY = (maxY - minY) + gapY;
+    const idx = shapes.indexOf(selectedShape);
+    if(idx>-1) shapes.splice(idx, 1);
+    for(let r=0; r<rows; r++) {
+        for(let c=0; c<cols; c++) {
+            let clone = JSON.parse(JSON.stringify(basePoly));
+            clone.vertices.forEach(v => { v.x += c * stepX; v.y += r * stepY; });
+            shapes.push(clone);
+        }
+    }
+    selectedShape = null; setTool('SELECT'); saveState(); draw();
+});
+
+document.getElementById('btnApplyPolarArray').addEventListener('click', () => {
+    if (!selectedShape) return alert("Select a shape first.");
+    const count = parseInt(document.getElementById('arrCount').value);
+    const totalAngle = parseFloat(document.getElementById('arrAngle').value) * Math.PI / 180;
+    const basePoly = convertShapeToPoly(selectedShape);
+    
+    let cx=0, cy=0;
+    basePoly.vertices.forEach(v=>{cx+=v.x; cy+=v.y;});
+    cx /= basePoly.vertices.length; cy /= basePoly.vertices.length;
+    
+    const idx = shapes.indexOf(selectedShape);
+    if(idx>-1) shapes.splice(idx, 1);
+    for(let i=0; i<count; i++) {
+        let angle = i * (totalAngle / count);
+        let clone = JSON.parse(JSON.stringify(basePoly));
+        clone.vertices.forEach(v => {
+            let dx = v.x - cx; let dy = v.y - cy;
+            v.x = cx + dx*Math.cos(angle) - dy*Math.sin(angle);
+            v.y = cy + dx*Math.sin(angle) + dy*Math.cos(angle);
+        });
+        shapes.push(clone);
+    }
+    selectedShape = null; setTool('SELECT'); saveState(); draw();
+});
+
 
 function setTool(tool) {
     if (currentTool === 'POLY' && currentPolyVertices.length > 2 && tool !== 'POLY') {
@@ -148,7 +236,10 @@ function setTool(tool) {
     if (tool === 'SELECT') document.getElementById('toolSelect').classList.add('active');
     if (tool === 'SHAPE') document.getElementById('toolShape').classList.add('active');
     if (tool === 'POLY') document.getElementById('toolPoly').classList.add('active');
+    if (tool === 'TRANSFORM') document.getElementById('toolTransform').classList.add('active');
     if (tool === 'PAN') document.getElementById('toolPan').classList.add('active');
+    
+    if (tool !== 'TRANSFORM') document.getElementById('array-panel').style.display = 'none';
     
     canvas.style.cursor = tool === 'PAN' ? 'grab' : (tool === 'POLY' ? 'crosshair' : (tool === 'SHAPE' ? 'crosshair' : 'default'));
     
@@ -383,6 +474,36 @@ canvas.addEventListener('mousedown', (e) => {
         return;
     }
 
+    if (currentTool === 'TRANSFORM' && selectedShape) {
+        if (!currentTransformType.startsWith('array_')) {
+            if (currentTransformType === 'copy') {
+                let clone = JSON.parse(JSON.stringify(selectedShape));
+                if (clone.type === 'shape' || clone.type === 'rect') { clone.x += 30; clone.y += 30; }
+                else if (clone.type === 'poly') { clone.vertices.forEach(v => {v.x+=30;v.y+=30;}); }
+                shapes.push(clone); selectedShape = clone; saveState(); draw(); return;
+            }
+            if (currentTransformType === 'mirror') {
+                let poly = convertShapeToPoly(selectedShape);
+                let cx=0; poly.vertices.forEach(v=>cx+=v.x); cx/=poly.vertices.length;
+                poly.vertices.forEach(v=>v.x = cx - (v.x - cx));
+                const idx = shapes.indexOf(selectedShape);
+                shapes[idx] = poly; selectedShape = poly; saveState(); draw(); return;
+            }
+            // Rotate & Shear initialization
+            if (selectedShape.type !== 'poly') {
+                const poly = convertShapeToPoly(selectedShape);
+                const idx = shapes.indexOf(selectedShape); shapes[idx] = poly; selectedShape = poly;
+            }
+            transformActive = true;
+            let cx=0, cy=0; selectedShape.vertices.forEach(v=>{cx+=v.x; cy+=v.y;});
+            transformPivot = {x: cx/selectedShape.vertices.length, y: cy/selectedShape.vertices.length};
+            transformOriginalPoly = JSON.parse(JSON.stringify(selectedShape));
+            transformStartAngle = Math.atan2(my - transformPivot.y, mx - transformPivot.x);
+            transformStartMouse = {x: mx, y: my};
+            return;
+        }
+    }
+
     // SELECT TOOL logic
     let clickedOnShape = false;
     for (let i = shapes.length - 1; i >= 0; i--) {
@@ -466,6 +587,30 @@ canvas.addEventListener('mousemove', (e) => {
         return;
     }
 
+    if (transformActive && selectedShape) {
+        if (currentTransformType === 'rotate') {
+            let currentAngle = Math.atan2(my - transformPivot.y, mx - transformPivot.x);
+            let dTheta = currentAngle - transformStartAngle;
+            for(let i=0; i<selectedShape.vertices.length; i++) {
+                let ov = transformOriginalPoly.vertices[i];
+                let dx = ov.x - transformPivot.x, dy = ov.y - transformPivot.y;
+                selectedShape.vertices[i].x = transformPivot.x + dx*Math.cos(dTheta) - dy*Math.sin(dTheta);
+                selectedShape.vertices[i].y = transformPivot.y + dx*Math.sin(dTheta) + dy*Math.cos(dTheta);
+            }
+        } else if (currentTransformType === 'shear') {
+            let dxMouse = mx - transformStartMouse.x;
+            for(let i=0; i<selectedShape.vertices.length; i++) {
+                let ov = transformOriginalPoly.vertices[i];
+                let factor = (ov.y - transformPivot.y) / 50; 
+                selectedShape.vertices[i].x = ov.x + dxMouse * factor;
+                selectedShape.vertices[i].y = ov.y;
+            }
+        }
+        if (shrinkwrapActive) updateShrinkwrap();
+        draw();
+        return;
+    }
+
     if (currentTool === 'SELECT') {
         if (resizing && selectedShape) {
             if (selectedShape.type === 'shape' || selectedShape.type === 'rect') {
@@ -540,6 +685,10 @@ canvas.addEventListener('mouseup', (e) => {
         }
         isDrawingShape = false;
         draw();
+    }
+    if (transformActive) {
+        transformActive = false;
+        saveState();
     }
     if (resizing || isDragging) {
         resizing = false;
