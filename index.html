@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Semantic Segment Mapping</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="sidebar">
+    <div class="sidebar-header">
+      <h2>Segment Editor</h2>
+      <p>Semantic Map Generator</p>
+    </div>
+    
+    <div class="controls-section">
+      <div class="control-group">
+        <label>Shape Count: <span id="shapeCountVal">3</span></label>
+        <input type="range" id="shapeCount" min="0" max="20" value="3">
+      </div>
+
+      <div class="control-group">
+        <label>Current Selected Class</label>
+        <select id="semanticColor">
+          <option value="#FF0000">Automobile / Car (Red)</option>
+          <option value="#00FF00">Vegetation / Tree (Green)</option>
+          <option value="#0000FF">Sky / Water (Blue)</option>
+          <option value="#FFFF00">Structure / Building (Yellow)</option>
+          <option value="#FF00FF">Road / Ground (Magenta)</option>
+          <option value="#00FFFF">Human / Person (Cyan)</option>
+          <option value="#808080">Other (Gray)</option>
+          <option value="#FFFFFF">Ignore (White)</option>
+        </select>
+        <p class="helper-text">Changes color of selected shape or defines color for new shapes.</p>
+      </div>
+
+      <div class="control-group">
+        <label>Layer Settings</label>
+        <button id="btnFloor" class="btn-toggle">Add Floor Plane</button>
+      </div>
+
+      <div class="control-group">
+        <label>Shrinkwrap Offset: <span id="shrinkOffsetVal">10</span>px</label>
+        <input type="range" id="shrinkOffset" min="0" max="50" value="10">
+        <button id="btnShrinkwrap" class="btn-action">Compute Shrinkwrap</button>
+      </div>
+    </div>
+    
+    <div class="controls-section">
+      <h3>Reference Underlay</h3>
+      <div class="file-upload-wrapper">
+        <button id="btnUploadImage" class="btn-secondary" onclick="document.getElementById('bgImageUpload').click()">Upload Reference Image</button>
+        <input type="file" id="bgImageUpload" accept="image/png, image/jpeg" style="display:none">
+      </div>
+      <div class="control-group">
+        <label>Reference Opacity <span id="bgImageOpacityVal">50%</span></label>
+        <input type="range" id="bgImageOpacity" min="0" max="1" step="0.01" value="0.5">
+      </div>
+      <div class="control-group">
+        <label>Background Intensity (Grayscale)</label>
+        <input type="range" id="bgColor" min="0" max="255" value="255">
+      </div>
+    </div>
+
+    <div class="controls-section export-section">
+      <h3>Export System</h3>
+      <div class="action-grid">
+        <button id="btnExportPNG" class="btn-primary">Export PNG Mask</button>
+        <button id="btnSaveJSON" class="btn-secondary">Save JSON State</button>
+        <button id="btnLoadJSON" class="btn-secondary" onclick="document.getElementById('jsonUpload').click()">Load JSON State</button>
+        <input type="file" id="jsonUpload" accept=".json" style="display:none">
+      </div>
+    </div>
+  </div>
+  
+  <div id="main-view">
+    <div id="canvas-wrapper">
+      <canvas id="mainCanvas" width="720" height="1000"></canvas>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
