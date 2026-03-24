@@ -211,6 +211,12 @@ saveState();
 
 // Undo/Redo & Shortcuts
 window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        isMarquee = false; isDrawingShape = false; transformActive = false;
+        resizing = false; isDragging = false; calibrateStart = null;
+        currentPolyVertices = []; selectedNodeIndex = -1;
+        draw(); return;
+    }
     if (selectedShapes.length > 0 && e.key === '[') {
         selectedShapes.forEach(s => {
             const idx = shapes.indexOf(s);
@@ -1109,7 +1115,10 @@ canvas.addEventListener('mouseup', (e) => {
         isDrawingShape = false; draw();
     }
     if (transformActive) { transformActive = false; saveState(); }
-    if (resizing || isDragging) { resizing = false; isDragging = false; saveState(); }
+    if (resizing || isDragging || isMarquee) { 
+        resizing = false; isDragging = false; isMarquee = false; 
+        saveState(); draw(); 
+    }
 });
 
 function getResizeCorner(s, mx, my) {
