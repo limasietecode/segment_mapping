@@ -57,6 +57,8 @@
         <button id="toolCalibrate" title="Calibrate Scale (S)" class="tool-btn"><i class="ph ph-ruler"></i></button>
         <button id="btnFloor" title="Add Floor Plane" class="tool-btn"><i class="ph ph-align-bottom"></i></button>
         <button id="btnShrinkwrap" title="Compute Shrinkwrap" class="tool-btn"><i class="ph ph-bounding-box"></i></button>
+        <div class="divider"></div>
+        <button id="btnLayersToggle" title="Layers (L)" class="tool-btn"><i class="ph ph-stack"></i></button>
       </div>
 
       <!-- Main Canvas Area -->
@@ -124,6 +126,43 @@
                 <label style="display:flex;justify-content:space-between;"><span>Global Shrinkwrap</span> <span id="shrinkOffsetVal" style="color:#fff">10</span></label>
                 <input type="range" id="shrinkOffset" min="0" max="50" value="10">
             </div>
+          </div>
+        </div>
+
+        <!-- Floating Layers Panel -->
+        <div id="layers-panel" class="floating-window" style="display:none; top:20px; left:70px; width:280px; max-height:60vh;">
+          <div class="window-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <span>Layers</span>
+            <div style="display:flex; gap:4px;">
+              <button id="btnLayerAdd" class="layer-hdr-btn" title="Add empty layer"><i class="ph ph-plus"></i></button>
+              <button id="btnLayerDelete" class="layer-hdr-btn" title="Delete selected layer"><i class="ph ph-trash"></i></button>
+            </div>
+          </div>
+          <div class="window-content" style="padding:8px;">
+            <div style="display:flex; gap:6px; margin-bottom:8px; align-items:center;">
+              <select id="layerBlendMode" style="flex:1; font-size:10px; padding:4px;">
+                <option value="source-over">Normal</option>
+                <option value="multiply">Multiply</option>
+                <option value="screen">Screen</option>
+                <option value="overlay">Overlay</option>
+                <option value="darken">Darken</option>
+                <option value="lighten">Lighten</option>
+                <option value="color-dodge">Color Dodge</option>
+                <option value="color-burn">Color Burn</option>
+                <option value="hard-light">Hard Light</option>
+                <option value="soft-light">Soft Light</option>
+                <option value="difference">Difference</option>
+                <option value="exclusion">Exclusion</option>
+                <option value="hue">Hue</option>
+                <option value="saturation">Saturation</option>
+                <option value="color">Color</option>
+                <option value="luminosity">Luminosity</option>
+              </select>
+              <label style="font-size:10px; color:#888; margin:0; white-space:nowrap;">Op:</label>
+              <input type="range" id="layerOpacity" min="0" max="100" value="100" style="width:60px;">
+              <span id="layerOpacityVal" style="font-size:10px; color:#fff; width:28px; text-align:right;">100%</span>
+            </div>
+            <div id="layersList" style="overflow-y:auto; max-height:calc(60vh - 120px);"></div>
           </div>
         </div>
 

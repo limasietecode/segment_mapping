@@ -5,7 +5,8 @@ let shapes = [];
 let historyStack = [];
 let historyIndex = -1;
 
-let currentTool = "SELECT"; // SELECT, SHAPE, POLY, CURVE, PAN, TRANSFORM
+let currentTool = "SELECT"; // SELECT, SHAPE, POLY, CURVE, PAN, TRANSFORM, CALIBRATE
+let layerCounter = 0;
 let floorVisible = false;
 let shrinkwrapOffset = 10;
 let shrinkwrapShape = null;
@@ -38,7 +39,17 @@ let editingBlockId = null;
 let preEditShapes = [];
 let preEditBg = 255;
 
+function ensureLayerProps(s) {
+    if (!s.layerName) s.layerName = s.type.charAt(0).toUpperCase() + s.type.slice(1) + ' ' + (++layerCounter);
+    if (s.opacity === undefined) s.opacity = 1;
+    if (s.visible === undefined) s.visible = true;
+    if (s.locked === undefined) s.locked = false;
+    if (!s.blendMode) s.blendMode = 'source-over';
+    return s;
+}
+
 function hitTest(s, mx, my) {
+    if (s.visible === false) return false;
     if (s.isShrinkwrap) return ptInConvexPolygon(mx, my, s.vertices);
     if (s.type === 'group') {
         for(let i=0; i<s.children.length; i++) if(hitTest(s.children[i], mx, my)) return true;
@@ -215,7 +226,8 @@ window.addEventListener('keydown', (e) => {
         isMarquee = false; isDrawingShape = false; transformActive = false;
         resizing = false; isDragging = false; calibrateStart = null;
         currentPolyVertices = []; selectedNodeIndex = -1;
-        draw(); return;
+        selectedShapes = [];
+        updatePropertiesPanel(); draw(); return;
     }
     if (selectedShapes.length > 0 && e.key === '[') {
         selectedShapes.forEach(s => {
@@ -894,8 +906,15 @@ canvas.addEventListener('mousedown', (e) => {
         let clickedShape = null;
         let hitHandle = null;
 
-        if (selectedShapes.length === 1 && !selectedShapes[0].isShrinkwrap) {
-            let s = selectedShapes[0];
+        // First: find what shape (if any) is under the cursor
+        for (let i = shapes.length - 1; i >= 0; i--) {
+            if (hitTest(shapes[i], mx, my)) { clickedShape = shapes[i]; break; }
+        }
+        if (!clickedShape && shrinkwrapShape && hitTest(shrinkwrapShape, mx, my)) clickedShape = shrinkwrapShape;
+
+        // Only check handles/edges if the clicked shape is ALREADY the sole selection
+        if (clickedShape && selectedShapes.length === 1 && selectedShapes[0] === clickedShape && !clickedShape.isShrinkwrap) {
+            let s = clickedShape;
             if (s.type === 'shape' || s.type === 'rect') hitHandle = getResizeCorner(s, mx, my);
             else if (s.type === 'poly' || s.type === 'curve') {
                 for(let v=0; v<s.vertices.length; v++) if (Math.hypot(mx - s.vertices[v].x, my - s.vertices[v].y) < 8) { hitHandle = "v"+v; break; }
@@ -903,18 +922,20 @@ canvas.addEventListener('mousedown', (e) => {
             if (hitHandle) {
                 if (hitHandle.startsWith('v')) selectedNodeIndex = parseInt(hitHandle.substring(1));
                 else selectedNodeIndex = -1;
-                resizing = true; resizeCorner = hitHandle; return;
+                resizing = true; resizeCorner = hitHandle;
+                updatePropertiesPanel(); draw(); return;
             }
             
+            // Edge-click node injection (only when shape is already selected)
             if (s.type === 'poly' || s.type === 'curve') {
                 for(let i=0; i<s.vertices.length; i++) {
                     let v1 = s.vertices[i]; let v2 = s.vertices[(i+1)%s.vertices.length];
                     if (v2.moveTo || v1.moveTo) continue;
                     let l2 = Math.pow(v1.x - v2.x, 2) + Math.pow(v1.y - v2.y, 2);
                     if (l2 === 0) continue;
-                    let t = Math.max(0, Math.min(1, ((rawMx - v1.x) * (v2.x - v1.x) + (rawMy - v1.y) * (v2.y - v1.y)) / l2));
+                    let t = Math.max(0, Math.min(1, ((mx - v1.x) * (v2.x - v1.x) + (my - v1.y) * (v2.y - v1.y)) / l2));
                     let projX = v1.x + t * (v2.x - v1.x); let projY = v1.y + t * (v2.y - v1.y);
-                    if (Math.hypot(rawMx - projX, rawMy - projY) < 5) {
+                    if (Math.hypot(mx - projX, my - projY) < 5) {
                         s.vertices.splice(i+1, 0, {x: projX, y: projY});
                         selectedNodeIndex = i+1; resizing = true; resizeCorner = "v" + (i+1);
                         saveState(); draw(); return;
@@ -923,19 +944,15 @@ canvas.addEventListener('mousedown', (e) => {
             }
         }
         
-        for (let i = shapes.length - 1; i >= 0; i--) {
-            if (hitTest(shapes[i], mx, my)) { clickedShape = shapes[i]; break; }
-        }
-        if (!clickedShape && shrinkwrapShape && hitTest(shrinkwrapShape, mx, my)) clickedShape = shrinkwrapShape;
-        
         if (clickedShape) {
             if (e.shiftKey) {
                 let idx = selectedShapes.indexOf(clickedShape);
                 if (idx > -1) selectedShapes.splice(idx, 1);
                 else selectedShapes.push(clickedShape);
             } else {
-                if (!selectedShapes.includes(clickedShape)) selectedShapes = [clickedShape];
+                selectedShapes = [clickedShape];
             }
+            selectedNodeIndex = -1;
             isDragging = true;
             dragStartPoint = {x: mx, y: my};
         } else {
@@ -1121,6 +1138,124 @@ window.addEventListener('mouseup', (e) => {
     }
 });
 
+// ========== LAYERS PANEL ENGINE ==========
+document.getElementById('btnLayersToggle').addEventListener('click', () => {
+    let lp = document.getElementById('layers-panel');
+    lp.style.display = lp.style.display === 'none' ? 'block' : 'none';
+    document.getElementById('btnLayersToggle').classList.toggle('active');
+    if (lp.style.display !== 'none') renderLayersPanel();
+});
+
+function renderLayersPanel() {
+    const list = document.getElementById('layersList');
+    list.innerHTML = '';
+    // Render top-to-bottom (last shape = top layer)
+    for (let i = shapes.length - 1; i >= 0; i--) {
+        let s = ensureLayerProps(shapes[i]);
+        let isSelected = selectedShapes.includes(s);
+        let div = document.createElement('div');
+        div.className = 'layer-item' + (isSelected ? ' active' : '');
+        div.draggable = true;
+        div.dataset.idx = i;
+        
+        // Visibility eye
+        let eyeBtn = document.createElement('button');
+        eyeBtn.className = 'layer-icon-btn' + (s.visible ? ' on' : '');
+        eyeBtn.innerHTML = s.visible ? '<i class="ph ph-eye"></i>' : '<i class="ph ph-eye-slash"></i>';
+        eyeBtn.addEventListener('click', (e) => { e.stopPropagation(); s.visible = !s.visible; renderLayersPanel(); draw(); });
+        
+        // Lock
+        let lockBtn = document.createElement('button');
+        lockBtn.className = 'layer-icon-btn' + (s.locked ? ' locked' : '');
+        lockBtn.innerHTML = s.locked ? '<i class="ph ph-lock-simple"></i>' : '<i class="ph ph-lock-simple-open"></i>';
+        lockBtn.addEventListener('click', (e) => { e.stopPropagation(); s.locked = !s.locked; renderLayersPanel(); });
+        
+        // Color swatch
+        let swatch = document.createElement('div');
+        swatch.className = 'layer-swatch';
+        swatch.style.background = s.fillColor || '#888';
+        
+        // Name input
+        let nameInput = document.createElement('input');
+        nameInput.className = 'layer-name';
+        nameInput.value = s.layerName;
+        nameInput.addEventListener('change', (e) => { s.layerName = e.target.value; });
+        nameInput.addEventListener('dblclick', (e) => { e.target.select(); });
+        nameInput.addEventListener('click', (e) => { e.stopPropagation(); });
+        
+        // Type indicator
+        let typeLabel = document.createElement('span');
+        typeLabel.style.cssText = 'font-size:9px; color:#666; flex-shrink:0;';
+        let typeMap = {shape:'■', rect:'■', poly:'▲', curve:'◆', group:'◫', blockRef:'⊞'};
+        typeLabel.textContent = typeMap[s.type] || '?';
+        
+        div.appendChild(eyeBtn);
+        div.appendChild(lockBtn);
+        div.appendChild(swatch);
+        div.appendChild(nameInput);
+        div.appendChild(typeLabel);
+        
+        // Click to select
+        div.addEventListener('click', () => {
+            selectedShapes = [s];
+            updatePropertiesPanel(); renderLayersPanel(); draw();
+            // Update blend/opacity controls
+            document.getElementById('layerBlendMode').value = s.blendMode || 'source-over';
+            document.getElementById('layerOpacity').value = Math.round((s.opacity || 1) * 100);
+            document.getElementById('layerOpacityVal').textContent = Math.round((s.opacity || 1) * 100) + '%';
+        });
+        
+        // Drag-to-reorder
+        div.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', i); });
+        div.addEventListener('dragover', (e) => { e.preventDefault(); div.classList.add('drag-over'); });
+        div.addEventListener('dragleave', () => { div.classList.remove('drag-over'); });
+        div.addEventListener('drop', (e) => {
+            e.preventDefault(); div.classList.remove('drag-over');
+            let fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
+            let toIdx = parseInt(div.dataset.idx);
+            if (fromIdx !== toIdx) {
+                let item = shapes.splice(fromIdx, 1)[0];
+                shapes.splice(toIdx, 0, item);
+                saveState(); renderLayersPanel(); draw();
+            }
+        });
+        
+        list.appendChild(div);
+    }
+}
+
+// Blend mode & opacity controls
+document.getElementById('layerBlendMode').addEventListener('change', (e) => {
+    if (selectedShapes.length === 1) {
+        ensureLayerProps(selectedShapes[0]).blendMode = e.target.value;
+        draw();
+    }
+});
+document.getElementById('layerOpacity').addEventListener('input', (e) => {
+    let val = parseInt(e.target.value);
+    document.getElementById('layerOpacityVal').textContent = val + '%';
+    if (selectedShapes.length === 1) {
+        ensureLayerProps(selectedShapes[0]).opacity = val / 100;
+        draw();
+    }
+});
+
+document.getElementById('btnLayerDelete').addEventListener('click', () => {
+    if (selectedShapes.length === 0) return;
+    selectedShapes.forEach(s => {
+        let idx = shapes.indexOf(s);
+        if (idx > -1) shapes.splice(idx, 1);
+    });
+    selectedShapes = []; updatePropertiesPanel(); saveState(); renderLayersPanel(); draw();
+});
+
+// Also refresh layers panel after relevant actions
+let origSaveState = saveState;
+saveState = function() {
+    origSaveState();
+    if (document.getElementById('layers-panel').style.display !== 'none') renderLayersPanel();
+};
+
 function getResizeCorner(s, mx, my) {
     if (s.isShrinkwrap) return null;
     const tol = 12;
@@ -1223,8 +1358,14 @@ function drawShapePrimitive(ctx, type, cx, cy, w, h) {
 }
 
 function drawShapeNode(ctx, s, isExport) {
+    if (s.visible === false && !isExport) return;
+    let shapeOpacity = s.opacity !== undefined ? s.opacity : 1;
+    let shapeBlend = s.blendMode || 'source-over';
+    if (!isExport) { ctx.globalCompositeOperation = shapeBlend; }
+
     if (s.type === 'group') {
         s.children.forEach(c => drawShapeNode(ctx, c, isExport));
+        ctx.globalCompositeOperation = 'source-over';
         return;
     }
     if (s.type === 'blockRef') {
@@ -1234,9 +1375,10 @@ function drawShapeNode(ctx, s, isExport) {
             master.children.forEach(c => drawShapeNode(ctx, c, isExport));
             ctx.restore();
         }
+        ctx.globalCompositeOperation = 'source-over';
         return;
     }
-    ctx.fillStyle = s.fillColor; ctx.globalAlpha = isExport ? 1.0 : 0.85;
+    ctx.fillStyle = s.fillColor; ctx.globalAlpha = isExport ? 1.0 : 0.85 * shapeOpacity;
     if (s.type === 'shape' || s.type === 'rect') {
         drawShapePrimitive(ctx, s.subType || 'rect', s.x, s.y, s.w, s.h);
     } else if ((s.type === 'poly' || s.type === 'curve') && s.vertices.length > 0) {
@@ -1249,6 +1391,7 @@ function drawShapeNode(ctx, s, isExport) {
         ctx.closePath(); ctx.fill('evenodd');
     }
     ctx.globalAlpha = 1.0;
+    ctx.globalCompositeOperation = 'source-over';
 }
 
 function draw() {
